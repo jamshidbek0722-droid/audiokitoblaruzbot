@@ -56,7 +56,7 @@ async def admin_check_message(message: Message, state: FSMContext):
     # Check if message is a menu button
     text = message.text
     if text == "⚙️ Admin Panel":
-        await message.answer("⚙️ **Admin Paneliga xush kelibsiz.**", reply_markup=keyboards.get_admin_menu())
+        await message.answer("⚙️ **Admin Paneliga xush kelibsiz.**", reply_markup=keyboards.get_admin_menu(), parse_mode="Markdown")
         return
         
     elif text == "🏠 Asosiy menyu":
