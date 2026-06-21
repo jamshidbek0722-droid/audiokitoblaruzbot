@@ -27,15 +27,20 @@ Ushbu bot Telegram kanali orqali ishlaydigan in-memory ma'lumotlar bazasiga ega 
 
 ## O'rnatish va Ishga tushirish
 
-1. Zaxira fayllarini o'rnating:
+1. Kutubxonalarni o'rnating:
    ```bash
    pip install -r requirements.txt
    ```
 
-2. Sozlamalarni tekshiring yoki o'zgartiring (`config.py`):
-   - `BOT_TOKEN`: Telegram bot tokeni.
-   - `OWNER_ID`: Tizim asosiy egasining Telegram ID raqami.
-   - `STORAGE_CHANNEL_ID`: Kitoblar va baza saqlanadigan kanal ID-si (ID `-100` bilan boshlanishi kerak).
+2. `.env` sozlamalarini to'ldiring:
+   - Avval `.env.example` faylidan nusxa olib, `.env` deb nomlang:
+     ```bash
+     cp .env.example .env
+     ```
+   - `.env` faylini ochib, quyidagi o'zgaruvchilarni to'ldiring:
+     - `BOT_TOKEN`: Telegram bot tokeni (BotFather orqali olingan).
+     - `OWNER_ID`: Tizim asosiy egasining (owner) Telegram ID raqami.
+     - `STORAGE_CHANNEL_ID`: Kitoblar va baza saqlanadigan kanal ID-si (ID `-100` bilan boshlanishi kerak).
 
 3. Botni saqlash kanaliga qo'shing va unga **Administrator** huquqlarini bering:
    - Xabarlarni yuborish (Post messages)
