@@ -68,8 +68,6 @@ async def save_index(bot: Bot):
             logger.error(f"Error saving index to storage channel: {e}", exc_info=True)
 
 async def load_index(bot: Bot):
-    global admins, categories, books, users, recommendations, settings, required_channels
-    
     try:
         logger.info("Connecting to storage channel to retrieve index...")
         chat = await bot.get_chat(chat_id=STORAGE_CHANNEL_ID)
@@ -85,32 +83,62 @@ async def load_index(bot: Bot):
             
             data = json.loads(dest.read().decode("utf-8"))
             
-            # Populate in-memory structures
-            admins = set(data.get("admins", []))
+            # Populate in-memory structures in-place to avoid stale reference bugs
+            admins.clear()
+            admins.update(data.get("admins", []))
             admins.add(OWNER_ID) # Always ensure main owner is admin
             
-            categories = data.get("categories", {})
-            books = data.get("books", {})
+            categories.clear()
+            categories.update(data.get("categories", {}))
+            
+            books.clear()
+            books.update(data.get("books", {}))
+            
+            # Ensure books schema contains ratings and keywords
+            for b in books.values():
+                if "ratings" not in b:
+                    b["ratings"] = {}
+                if "keywords" not in b:
+                    b["keywords"] = []
             
             # Parse user keys to integers
             raw_users = data.get("users", {})
-            users = {int(k): v for k, v in raw_users.items()}
+            users.clear()
+            users.update({int(k): v for k, v in raw_users.items()})
             
-            recommendations = data.get("recommendations", {})
-            settings = data.get("settings", {"mandatory_subscription": False})
+            # Ensure users schema contains profile
+            for u in users.values():
+                if "profile" not in u:
+                    u["profile"] = None
+                if "favorites" not in u:
+                    u["favorites"] = []
+                if "history" not in u:
+                    u["history"] = []
+            
+            recommendations.clear()
+            recommendations.update(data.get("recommendations", {}))
+            
+            settings.clear()
+            # Ensure custom_footer exists
+            default_settings = {"mandatory_subscription": False, "custom_footer": ""}
+            default_settings.update(data.get("settings", {}))
+            settings.update(default_settings)
             
             # Parse required channel keys to integers
             raw_req = data.get("required_channels", {})
-            required_channels = {int(k): v for k, v in raw_req.items()}
+            required_channels.clear()
+            required_channels.update({int(k): v for k, v in raw_req.items()})
             
             logger.info("Database index loaded successfully.")
         else:
             logger.warning("No pinned message found in storage channel. Initializing new database index...")
+            admins.clear()
             admins.add(OWNER_ID)
             await save_index(bot)
     except Exception as e:
         logger.error(f"Error loading database index: {e}", exc_info=True)
         # Initialize default state
+        admins.clear()
         admins.add(OWNER_ID)
         try:
             await save_index(bot)
@@ -128,16 +156,12 @@ async def register_user(user_id: int, username: str, full_name: str, bot: Bot):
             "full_name": full_name or "",
             "favorites": [],
             "history": [],
+            "profile": None,
             "joined_at": datetime.now().isoformat()
         }
-        await save_index(bot)
+        # Do NOT save_index here to avoid spamming the channel!
     else:
-        updated = False
         if users[user_id].get("username") != username:
             users[user_id]["username"] = username or ""
-            updated = True
         if users[user_id].get("full_name") != full_name:
             users[user_id]["full_name"] = full_name or ""
-            updated = True
-        if updated:
-            await save_index(bot)

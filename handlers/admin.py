@@ -6,21 +6,21 @@ import asyncio
 from datetime import datetime
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from config import OWNER_ID, STORAGE_CHANNEL_ID
 import database
 import keyboards
-from states import AdminState, AdminBookForm
+from states import AdminState, AdminBookForm, AdminReplyForm
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 # Global cancel handler for Admin FSM
-@router.message(F.text == "❌ Bekor qilish")
-@router.message(Command("cancel"))
+@router.message(StateFilter("*"), F.text == "❌ Bekor qilish")
+@router.message(StateFilter("*"), Command("cancel"))
 async def cancel_admin_fsm(message: Message, state: FSMContext):
     user_id = message.from_user.id
     if not database.is_admin(user_id):
@@ -42,6 +42,7 @@ ADMIN_MENU_BUTTONS = [
     "📢 Xabar yuborish",
     "👥 Adminlar",
     "🔐 Majburiy obuna",
+    "📝 Footer matnini sozlash",
     "🔄 Bazani yangilash",
     "📥 Bazani eksport qilish"
 ]
@@ -49,14 +50,11 @@ ADMIN_MENU_BUTTONS = [
 def is_admin_filter(message: Message) -> bool:
     return database.is_admin(message.from_user.id)
 
-# Middleware check inside admin router: Ensure only admins can trigger these
 @router.message(is_admin_filter, F.text.in_(ADMIN_MENU_BUTTONS))
 async def admin_check_message(message: Message, state: FSMContext):
-        
-    # Check if message is a menu button
     text = message.text
     if text == "⚙️ Admin Panel":
-        await message.answer("⚙️ **Admin Paneliga xush kelibsiz.**", reply_markup=keyboards.get_admin_menu(), parse_mode="Markdown")
+        await message.answer("⚙️ *Admin Paneliga xush kelibsiz.*", reply_markup=keyboards.get_admin_menu())
         return
         
     elif text == "🏠 Asosiy menyu":
@@ -64,7 +62,6 @@ async def admin_check_message(message: Message, state: FSMContext):
         return
         
     elif text == "📊 Statistika":
-        # Calculate stats
         users_count = len(database.users)
         cats_count = len([c for c in database.categories.values() if c.get("status", "active") == "active"])
         
@@ -73,30 +70,55 @@ async def admin_check_message(message: Message, state: FSMContext):
         audio_books = len([b for b in active_books if b.get("audio_file_id")])
         pdf_books = len([b for b in active_books if b.get("pdf_file_id")])
         
+        # User profile demographics
+        completed_profiles = 0
+        genders = {"Erkak": 0, "Ayol": 0}
+        regions = {}
+        
+        for u in database.users.values():
+            profile = u.get("profile")
+            if profile:
+                completed_profiles += 1
+                g = profile.get("gender")
+                if g in genders:
+                    genders[g] += 1
+                r = profile.get("region")
+                if r:
+                    regions[r] = regions.get(r, 0) + 1
+                    
+        gender_stats = f"  • Erkak: {genders['Erkak']} ta\n  • Ayol: {genders['Ayol']} ta" if completed_profiles > 0 else "  • Ma'lumot yo'q"
+        
+        region_list = []
+        for reg, cnt in sorted(regions.items(), key=lambda x: x[1], reverse=True):
+            region_list.append(f"  • {reg}: {cnt} ta")
+        region_stats = "\n".join(region_list) if region_list else "  • Ma'lumot yo'q"
+        
         stats_text = (
-            "📊 **Bot Statistikasi:**\n\n"
-            f"• **Foydalanuvchilar soni**: {users_count} ta\n"
-            f"• **Faol janrlar soni**: {cats_count} ta\n"
-            f"• **Faol kitoblar soni**: {books_count} ta\n"
-            f"• **Audio kitoblar**: {audio_books} ta\n"
-            f"• **PDF kitoblar**: {pdf_books} ta\n"
+            "📊 *Bot Statistikasi:*\n\n"
+            f"• *Foydalanuvchilar soni*: {users_count} ta\n"
+            f"• *To'ldirilgan profillar*: {completed_profiles} ta\n"
+            f"\n*Jins taqsimoti:*\n{gender_stats}\n"
+            f"\n*Hududlar bo'yicha taqsimot:*\n{region_stats}\n\n"
+            f"• *Faol janrlar soni*: {cats_count} ta\n"
+            f"• *Faol kitoblar soni*: {books_count} ta\n"
+            f"• *Audio kitoblar*: {audio_books} ta\n"
+            f"• *PDF kitoblar*: {pdf_books} ta"
         )
         await message.answer(stats_text)
         return
         
     elif text == "📁 Janrlarni boshqarish":
-        await message.answer("📁 **Janrlarni boshqarish bo'limi:**", reply_markup=keyboards.get_category_manage_keyboard())
+        await message.answer("📁 *Janrlarni boshqarish bo'limi:*", reply_markup=keyboards.get_category_manage_keyboard())
         return
         
     elif text == "📚 Kitoblarni boshqarish":
-        await message.answer("📚 **Kitoblarni boshqarish bo'limi:**", reply_markup=keyboards.get_book_manage_keyboard())
+        await message.answer("📚 *Kitoblarni boshqarish bo'limi:*", reply_markup=keyboards.get_book_manage_keyboard())
         return
         
     elif text == "💡 Tavsiyalar":
-        # Show pending recommendations count
         pend_recs = [r for r in database.recommendations.values() if r.get("status", "pending") == "pending"]
         await message.answer(
-            f"💡 **Tavsiyalar boshqaruvi**\n\nKutilayotgan tavsiyalar soni: {len(pend_recs)} ta",
+            f"💡 *Tavsiyalar boshqaruvi*\n\nKutilayotgan tavsiyalar soni: {len(pend_recs)} ta",
             reply_markup=keyboards.get_admin_recommendations_keyboard()
         )
         return
@@ -106,23 +128,33 @@ async def admin_check_message(message: Message, state: FSMContext):
         return
         
     elif text == "👥 Adminlar":
-        await message.answer("👥 **Adminlarni boshqarish bo'limi:**", reply_markup=keyboards.get_admin_manage_keyboard())
+        await message.answer("👥 *Adminlarni boshqarish bo'limi:*", reply_markup=keyboards.get_admin_manage_keyboard())
         return
         
     elif text == "🔐 Majburiy obuna":
         enabled = database.settings.get("mandatory_subscription", False)
-        await message.answer("🔐 **Majburiy obunani boshqarish:**", reply_markup=keyboards.get_subscription_manage_keyboard(enabled))
+        await message.answer("🔐 *Majburiy obunani boshqarish:*", reply_markup=keyboards.get_subscription_manage_keyboard(enabled))
+        return
+        
+    elif text == "📝 Footer matnini sozlash":
+        current_footer = database.settings.get("custom_footer", "o'rnatilmagan")
+        await state.set_state(AdminState.edit_footer)
+        await message.answer(
+            f"📝 *Footer matnini sozlash bo'limi*\n\n"
+            f"Joriy footer: \n`{current_footer}`\n\n"
+            "Yangi footer matnini yuboring (ixtiyoriy, masalan: @kanal_nomi yoki link):\n"
+            "Footerni butunlay o'chirish uchun 'o'chirish' deb yozing.",
+            reply_markup=keyboards.get_cancel_keyboard()
+        )
         return
         
     elif text == "🔄 Bazani yangilash":
-        # Rebuild/reload database index from storage channel
         await message.answer("🔄 Baza indeksi yangilanmoqda...")
         await database.load_index(message.bot)
         await message.answer("✅ Baza indeksi muvaffaqiyatli yuklandi.")
         return
         
     elif text == "📥 Bazani eksport qilish":
-        # Send json index file to admin
         data = {
             "admins": list(database.admins),
             "categories": database.categories,
@@ -137,6 +169,68 @@ async def admin_check_message(message: Message, state: FSMContext):
         await message.answer_document(document=input_file, caption="📥 Bot ma'lumotlar bazasi zaxira nusxasi (JSON).")
         return
 
+# ----------------- FOOTER EDIT HANDLER -----------------
+@router.message(AdminState.edit_footer)
+async def process_edit_footer(message: Message, state: FSMContext):
+    await state.clear()
+    text = message.text.strip()
+    
+    if text.lower() == "o'chirish":
+        new_footer = ""
+    else:
+        new_footer = text
+        
+    database.settings["custom_footer"] = new_footer
+    
+    log_text = f"#SETTINGS\nCUSTOM_FOOTER: {new_footer}"
+    try:
+        await message.bot.send_message(chat_id=STORAGE_CHANNEL_ID, text=log_text)
+    except Exception:
+        pass
+        
+    await database.save_index(message.bot)
+    footer_disp = new_footer if new_footer else "o'chirilgan"
+    await message.answer(
+        f"✅ Footer matni muvaffaqiyatli yangilandi: \n`{footer_disp}`",
+        reply_markup=keyboards.get_admin_menu()
+    )
+
+# ----------------- ADMIN REPLY HANDLER -----------------
+@router.callback_query(F.data.startswith("admin_reply_user:"))
+async def start_admin_reply(callback: CallbackQuery, state: FSMContext):
+    target_user_id = int(callback.data.split(":")[1])
+    await state.update_data(target_user_id=target_user_id)
+    await state.set_state(AdminReplyForm.message)
+    await callback.message.answer(
+        f"✍️ ID `{target_user_id}` bo'lgan foydalanuvchiga yuboriladigan javob xabarini yozing:",
+        reply_markup=keyboards.get_cancel_keyboard()
+    )
+    await callback.answer()
+
+@router.message(AdminReplyForm.message)
+async def process_admin_reply_message(message: Message, state: FSMContext):
+    data = await state.get_data()
+    await state.clear()
+    
+    target_user_id = data.get("target_user_id")
+    if not target_user_id:
+        await message.answer("Xatolik: foydalanuvchi ID topilmadi.", reply_markup=keyboards.get_admin_menu())
+        return
+        
+    reply_text = message.text.strip()
+    if not reply_text:
+        await message.answer("Javob matni bo'sh bo'lishi mumkin emas.")
+        return
+        
+    try:
+        await message.bot.send_message(
+            chat_id=target_user_id,
+            text=f"✉️ *Adminlardan javob keldi:*\n\n{reply_text}"
+        )
+        await message.answer("✅ Javob xabari foydalanuvchiga muvaffaqiyatli yuborildi.", reply_markup=keyboards.get_admin_menu())
+    except Exception as e:
+        await message.answer(f"⚠️ Xabarni foydalanuvchiga yuborib bo'lmadi.\nXatolik: {e}", reply_markup=keyboards.get_admin_menu())
+
 # ----------------- ADMINS MANAGEMENT -----------------
 @router.callback_query(F.data == "admin_list_all")
 async def list_admins(callback: CallbackQuery):
@@ -144,7 +238,7 @@ async def list_admins(callback: CallbackQuery):
     for adm in database.admins:
         name = "Owner" if adm == OWNER_ID else f"Admin (ID: {adm})"
         admin_list.append(f"• {name}")
-    text = "👥 **Tizim adminlari ro'yxati:**\n\n" + "\n".join(admin_list)
+    text = "👥 *Tizim adminlari ro'yxati:*\n\n" + "\n".join(admin_list)
     await callback.message.answer(text)
     await callback.answer()
 
@@ -170,7 +264,6 @@ async def process_add_admin(message: Message, state: FSMContext):
         
     database.admins.add(new_adm_id)
     
-    # Save to storage channel
     admin_log = f"#ADMIN\nID: {new_adm_id}\nSTATUS: active"
     await message.bot.send_message(chat_id=STORAGE_CHANNEL_ID, text=admin_log)
     
@@ -211,7 +304,6 @@ async def process_remove_admin(callback: CallbackQuery):
     if del_id in database.admins:
         database.admins.remove(del_id)
         
-        # Save to storage channel
         admin_log = f"#ADMIN\nID: {del_id}\nSTATUS: removed"
         await callback.bot.send_message(chat_id=STORAGE_CHANNEL_ID, text=admin_log)
         
@@ -241,7 +333,6 @@ async def process_add_category(message: Message, state: FSMContext):
         "status": "active"
     }
     
-    # Save structured block to channel
     log_text = f"#CATEGORY\nID: {cat_id}\nNAME: {name}\nSTATUS: active"
     await message.bot.send_message(chat_id=STORAGE_CHANNEL_ID, text=log_text)
     
@@ -269,7 +360,6 @@ async def process_del_category(callback: CallbackQuery):
     if cat_id in database.categories:
         database.categories[cat_id]["status"] = "removed"
         
-        # Save structured block to channel
         log_text = f"#CATEGORY\nID: {cat_id}\nNAME: {database.categories[cat_id]['name']}\nSTATUS: removed"
         await callback.bot.send_message(chat_id=STORAGE_CHANNEL_ID, text=log_text)
         
@@ -280,7 +370,6 @@ async def process_del_category(callback: CallbackQuery):
 # ----------------- ADMIN BOOK CREATION FLOW (REQUIRED AUDIO) -----------------
 @router.callback_query(F.data == "admin_add_book")
 async def start_add_book(callback: CallbackQuery, state: FSMContext):
-    # Verify categories exist first
     active_cats = {k: v for k, v in database.categories.items() if v.get("status", "active") == "active"}
     if not active_cats:
         await callback.answer("Avval bitta janr yarating!", show_alert=True)
@@ -324,18 +413,37 @@ async def process_book_desc(message: Message, state: FSMContext):
 async def process_book_category(callback: CallbackQuery, state: FSMContext):
     cat_id = callback.data.split(":")[1]
     await state.update_data(category=cat_id)
-    await state.set_state(AdminBookForm.audio)
+    await state.set_state(AdminBookForm.keywords)
     
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
     await callback.message.answer(
-        "🎧 Kitobning audio faylini yuboring (MAJBURIY - audio yoki hujjat formatida):",
-        reply_markup=keyboards.get_cancel_keyboard() # Do NOT offer Skip button here
+        "🔍 Kitobni qidirishda yordam beradigan kalit so'zlarni (vergul bilan ajratib) kiriting (ixtiyoriy, masalan: sarguzasht, tarix, roman):\n",
+        reply_markup=keyboards.get_skip_cancel_keyboard()
     )
     await callback.answer()
 
+@router.message(AdminBookForm.keywords)
+async def process_book_keywords(message: Message, state: FSMContext):
+    text = message.text.strip()
+    if text == "⏭️ O'tkazib yuborish":
+        keywords = []
+    else:
+        keywords = [kw.strip() for kw in text.split(",") if kw.strip()]
+        
+    await state.update_data(keywords=keywords)
+    await state.set_state(AdminBookForm.audio)
+    
+    await message.answer(
+        "🎧 Kitobning audio faylini yuboring (MAJBURIY - audio yoki hujjat formatida):",
+        reply_markup=keyboards.get_cancel_keyboard()
+    )
+
 @router.message(AdminBookForm.audio)
 async def process_book_audio(message: Message, state: FSMContext):
-    # Verify we actually received an audio or document
     file_id = None
     file_type = None
     
@@ -343,12 +451,10 @@ async def process_book_audio(message: Message, state: FSMContext):
         file_id = message.audio.file_id
         file_type = "audio"
     elif message.document:
-        # Document can be used for files
         file_id = message.document.file_id
         file_type = "document"
         
     if not file_id:
-        # Crucial validation! Block if missing
         await message.answer(
             "⚠️ Xatolik! Kitob yaratish uchun audio fayl yuborish majburiydir!\n"
             "Iltimos, audio yoki hujjat yuboring. Bekor qilish uchun '❌ Bekor qilish' tugmasini bosing."
@@ -388,22 +494,24 @@ async def process_book_pdf(message: Message, state: FSMContext):
         await message.answer("Iltimos, hujjat yuboring yoki 'O'tkazib yuborish' tugmasini bosing.")
         return
         
-    # Preview confirmation
     data = await state.get_data()
     cat_name = database.categories.get(data["category"], {}).get("name", "Noma'lum")
     
     desc_val = data.get('description') or "yo'q"
     cover_status = "bor" if data.get('cover_file_id') else "yo'q"
     pdf_status = "bor" if data.get('pdf_file_id') else "yo'q"
+    kws_val = ", ".join(data.get("keywords", [])) if data.get("keywords") else "yo'q"
+    
     summary = (
-        "📚 **Kitob tafsilotlari:**\n\n"
-        f"• **Nomi**: {data['title']}\n"
-        f"• **Muallif**: {data['author']}\n"
-        f"• **Janr**: {cat_name}\n"
-        f"• **Tavsif**: {desc_val}\n"
-        f"• **Audio**: bor (yuborilgan)\n"
-        f"• **Muqova**: {cover_status}\n"
-        f"• **PDF**: {pdf_status}\n\n"
+        "📚 *Kitob tafsilotlari:*\n\n"
+        f"• *Nomi*: {data['title']}\n"
+        f"• *Muallif*: {data['author']}\n"
+        f"• *Janr*: {cat_name}\n"
+        f"• *Kalit so'zlar*: {kws_val}\n"
+        f"• *Tavsif*: {desc_val}\n"
+        f"• *Audio*: bor (yuborilgan)\n"
+        f"• *Muqova*: {cover_status}\n"
+        f"• *PDF*: {pdf_status}\n\n"
         "Tizimga saqlashni tasdiqlaysizmi?"
     )
     
@@ -417,22 +525,26 @@ async def process_book_confirmation(callback: CallbackQuery, state: FSMContext):
     
     if decision == "no":
         await state.clear()
-        await callback.message.delete()
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         await callback.message.answer("Kitob qo'shish bekor qilindi.", reply_markup=keyboards.get_admin_menu())
         await callback.answer()
         return
         
-    # Yes - save
     data = await state.get_data()
     await state.clear()
     
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
     status_msg = await callback.message.answer("⌛ Fayllar saqlash kanaliga yuklanmoqda. Iltimos, kuting...")
     
     bot = callback.bot
     book_id = str(uuid.uuid4())[:8]
     
-    # 1. Forward/Upload audio file to channel
     audio_msg_id = None
     try:
         if data["audio_file_type"] == "document":
@@ -443,27 +555,26 @@ async def process_book_confirmation(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.error(f"Error uploading audio to channel: {e}")
         
-    # 2. Upload cover if present
     if data["cover_file_id"]:
         try:
             await bot.send_photo(chat_id=STORAGE_CHANNEL_ID, photo=data["cover_file_id"])
         except Exception as e:
             logger.error(f"Error uploading cover to channel: {e}")
             
-    # 3. Upload PDF if present
     if data["pdf_file_id"]:
         try:
             await bot.send_document(chat_id=STORAGE_CHANNEL_ID, document=data["pdf_file_id"])
         except Exception as e:
             logger.error(f"Error uploading PDF to channel: {e}")
             
-    # Save metadata
     book_entry = {
         "id": book_id,
         "title": data["title"],
         "author": data["author"],
         "description": data["description"].replace("\n", "\\n") if data["description"] else "",
         "category": data["category"],
+        "keywords": data.get("keywords", []),
+        "ratings": {},
         "audio_file_id": data["audio_file_id"],
         "audio_file_type": data["audio_file_type"],
         "audio_message_id": audio_msg_id,
@@ -476,10 +587,11 @@ async def process_book_confirmation(callback: CallbackQuery, state: FSMContext):
     
     database.books[book_id] = book_entry
     
-    # Post structured message to channel history
     audio_msg_val = audio_msg_id if audio_msg_id else "noma'lum"
     pdf_val = data['pdf_file_id'] if data['pdf_file_id'] else "yoq"
     cover_val = data['cover_file_id'] if data['cover_file_id'] else "yoq"
+    kws_str = ", ".join(data.get("keywords", [])) if data.get("keywords") else "yoq"
+    
     log_text = (
         "#BOOK\n"
         f"ID: {book_id}\n"
@@ -487,6 +599,7 @@ async def process_book_confirmation(callback: CallbackQuery, state: FSMContext):
         f"AUTHOR: {data['author']}\n"
         f"DESCRIPTION: {book_entry['description']}\n"
         f"CATEGORY: {data['category']}\n"
+        f"KEYWORDS: {kws_str}\n"
         f"AUDIO_FILE_ID: {data['audio_file_id']}\n"
         f"AUDIO_MESSAGE_ID: {audio_msg_val}\n"
         f"PDF_FILE_ID: {pdf_val}\n"
@@ -505,14 +618,12 @@ async def process_book_confirmation(callback: CallbackQuery, state: FSMContext):
     await status_msg.delete()
     await bot.send_message(
         chat_id=callback.from_user.id,
-        text=f"✅ Kitob muvaffaqiyatli yaratildi: **{data['title']}**",
+        text=f"✅ Kitob muvaffaqiyatli yaratildi: *{data['title']}*",
         reply_markup=keyboards.get_admin_menu()
     )
     await callback.answer()
 
 # ----------------- EDIT BOOK -----------------
-# Simply request title changes or delete and add.
-# We will implement a quick book edit of title/author.
 class AdminEditBookState(StatesGroup):
     select = State()
     field = State()
@@ -526,7 +637,7 @@ async def start_edit_book(callback: CallbackQuery, state: FSMContext):
         return
         
     builder = keyboards.InlineKeyboardBuilder()
-    for b in active_books[:20]: # Limit edit choices list
+    for b in active_books[:20]:
         builder.row(keyboards.InlineKeyboardButton(text=f"{b['title']} - {b['author']}", callback_data=f"edit_b_sel:{b['id']}"))
         
     await state.set_state(AdminEditBookState.select)
@@ -544,7 +655,10 @@ async def select_book_to_edit(callback: CallbackQuery, state: FSMContext):
         keyboards.InlineKeyboardButton(text="Nomi (Title)", callback_data="edit_f:title"),
         keyboards.InlineKeyboardButton(text="Muallifi (Author)", callback_data="edit_f:author")
     )
-    builder.row(keyboards.InlineKeyboardButton(text="Tavsifi (Description)", callback_data="edit_f:description"))
+    builder.row(
+        keyboards.InlineKeyboardButton(text="Tavsifi (Description)", callback_data="edit_f:description"),
+        keyboards.InlineKeyboardButton(text="Kalit so'zlar", callback_data="edit_f:keywords")
+    )
     
     await callback.message.edit_text("Qaysi maydonni tahrirlamoqchisiz?", reply_markup=builder.as_markup())
     await callback.answer()
@@ -555,11 +669,21 @@ async def select_field_to_edit(callback: CallbackQuery, state: FSMContext):
     await state.update_data(field=field)
     await state.set_state(AdminEditBookState.value)
     
-    await callback.message.delete()
-    await callback.message.answer(
-        f"Yangi qiymatni yuboring (Maydon: {field}):",
-        reply_markup=keyboards.get_cancel_keyboard()
-    )
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    if field == "keywords":
+        await callback.message.answer(
+            "Yangi kalit so'zlarni vergul bilan ajratib yuboring:",
+            reply_markup=keyboards.get_cancel_keyboard()
+        )
+    else:
+        await callback.message.answer(
+            f"Yangi qiymatni yuboring (Maydon: {field}):",
+            reply_markup=keyboards.get_cancel_keyboard()
+        )
     await callback.answer()
 
 @router.message(AdminEditBookState.value)
@@ -572,15 +696,16 @@ async def process_edited_value(message: Message, state: FSMContext):
     val = message.text.strip()
     
     if book_id in database.books:
-        # Edit in-memory
         if field == "description":
             database.books[book_id][field] = val.replace("\n", "\\n")
+        elif field == "keywords":
+            database.books[book_id][field] = [kw.strip() for kw in val.split(",") if kw.strip()]
         else:
             database.books[book_id][field] = val
             
         b = database.books[book_id]
+        kws_str = ", ".join(b.get("keywords", [])) if b.get("keywords") else "yoq"
         
-        # Log to channel
         log_text = (
             "#BOOK\n"
             f"ID: {book_id}\n"
@@ -588,6 +713,7 @@ async def process_edited_value(message: Message, state: FSMContext):
             f"AUTHOR: {b['author']}\n"
             f"DESCRIPTION: {b['description']}\n"
             f"CATEGORY: {b['category']}\n"
+            f"KEYWORDS: {kws_str}\n"
             f"AUDIO_FILE_ID: {b['audio_file_id']}\n"
             f"AUDIO_MESSAGE_ID: {b['audio_message_id']}\n"
             f"PDF_FILE_ID: {b['pdf_file_id'] or 'yoq'}\n"
@@ -612,7 +738,7 @@ async def list_delete_books(callback: CallbackQuery):
         return
         
     builder = keyboards.InlineKeyboardBuilder()
-    for b in active_books[:20]: # Show list
+    for b in active_books[:20]:
         builder.row(keyboards.InlineKeyboardButton(text=f"❌ {b['title']}", callback_data=f"del_b:{b['id']}"))
         
     await callback.message.answer("O'chirmoqchi bo'lgan kitobni tanlang:", reply_markup=builder.as_markup())
@@ -624,7 +750,6 @@ async def process_del_book(callback: CallbackQuery):
     if book_id in database.books:
         database.books[book_id]["status"] = "deleted"
         
-        # Log to channel
         b = database.books[book_id]
         log_text = (
             "#BOOK\n"
@@ -649,16 +774,16 @@ async def view_pending_recommendations(callback: CallbackQuery):
         await callback.answer("Hozircha kutilayotgan tavsiyalar yo'q.", show_alert=True)
         return
         
-    for r in pend_recs[:5]: # Show first 5 pending
+    for r in pend_recs[:5]:
         cat_name = database.categories.get(r["category"], {}).get("name", "Noma'lum")
         desc_val = r.get('description') or "yo'q"
         admin_text = (
-            "💡 **Kutilayotgan kitob tavsiyasi:**\n\n"
-            f"• **Nomi**: {r['title']}\n"
-            f"• **Muallif**: {r['author']}\n"
-            f"• **Janr**: {cat_name}\n"
-            f"• **Tavsif**: {desc_val}\n"
-            f"• **Kimdan**: ID `{r['user_id']}`\n"
+            "💡 *Kutilayotgan kitob tavsiyasi:*\n\n"
+            f"• *Nomi*: {r['title']}\n"
+            f"• *Muallif*: {r['author']}\n"
+            f"• *Janr*: {cat_name}\n"
+            f"• *Tavsif*: {desc_val}\n"
+            f"• *Kimdan*: ID `{r['user_id']}`\n"
         )
         kb = keyboards.get_recommendation_decide_keyboard(r["id"])
         await callback.message.answer(admin_text, reply_markup=kb)
@@ -675,25 +800,20 @@ async def approve_recommendation(callback: CallbackQuery):
         
     rec["status"] = "approved"
     
-    # Save recommendation status update to channel history
     log_rec = f"#RECOMMENDATION\nID: {rec_id}\nSTATUS: approved"
     try:
         await callback.bot.send_message(chat_id=STORAGE_CHANNEL_ID, text=log_rec)
     except Exception:
         pass
         
-    # Convert recommendation into a visible Book
     book_id = str(uuid.uuid4())[:8]
     
-    # Check if recommendation has audio
-    # If audio is present in the recommendation, we use it.
     audio_file_id = rec.get("audio_file_id", "")
     audio_file_type = rec.get("audio_file_type", "audio")
     
     audio_msg_id = None
     if audio_file_id:
         try:
-            # Upload it to storage channel
             if audio_file_type == "document":
                 sent_audio = await callback.bot.send_document(chat_id=STORAGE_CHANNEL_ID, document=audio_file_id)
             else:
@@ -702,7 +822,6 @@ async def approve_recommendation(callback: CallbackQuery):
         except Exception as e:
             logger.error(f"Error uploading recommendation audio: {e}")
             
-    # Cover photo upload to channel
     cover_file_id = rec.get("cover_file_id", "")
     if cover_file_id:
         try:
@@ -710,7 +829,6 @@ async def approve_recommendation(callback: CallbackQuery):
         except Exception:
             pass
             
-    # PDF upload to channel
     pdf_file_id = rec.get("pdf_file_id", "")
     if pdf_file_id:
         try:
@@ -718,13 +836,14 @@ async def approve_recommendation(callback: CallbackQuery):
         except Exception:
             pass
             
-    # Create Book entry
     book_entry = {
         "id": book_id,
         "title": rec["title"],
         "author": rec["author"],
         "description": rec["description"].replace("\n", "\\n") if rec["description"] else "",
         "category": rec["category"],
+        "keywords": [],
+        "ratings": {},
         "audio_file_id": audio_file_id,
         "audio_file_type": audio_file_type,
         "audio_message_id": audio_msg_id,
@@ -735,10 +854,8 @@ async def approve_recommendation(callback: CallbackQuery):
         "created_at": datetime.now().isoformat()
     }
     
-    # Save book to database
     database.books[book_id] = book_entry
     
-    # Post structured message to channel history
     audio_msg_val = audio_msg_id if audio_msg_id else "noma'lum"
     pdf_val = pdf_file_id if pdf_file_id else "yoq"
     cover_val = cover_file_id if cover_file_id else "yoq"
@@ -749,6 +866,7 @@ async def approve_recommendation(callback: CallbackQuery):
         f"AUTHOR: {rec['author']}\n"
         f"DESCRIPTION: {book_entry['description']}\n"
         f"CATEGORY: {rec['category']}\n"
+        f"KEYWORDS: yoq\n"
         f"AUDIO_FILE_ID: {audio_file_id}\n"
         f"AUDIO_MESSAGE_ID: {audio_msg_val}\n"
         f"PDF_FILE_ID: {pdf_val}\n"
@@ -763,19 +881,17 @@ async def approve_recommendation(callback: CallbackQuery):
         
     await database.save_index(callback.bot)
     
-    # Notify user who suggested it
     user_id = rec["user_id"]
     try:
         await callback.bot.send_message(
             chat_id=user_id,
-            text=f"🎉 Tabriklaymiz! Siz tavsiya qilgan **'{rec['title']}'** kitobi adminlar tomonidan ma'qullandi va botga qo'shildi! Rahmat!"
+            text=f"🎉 Tabriklaymiz! Siz tavsiya qilgan *'{rec['title']}'* kitobi adminlar tomonidan ma'qullandi va botga qo'shildi! Rahmat!"
         )
     except Exception:
         pass
         
-    # Edit admin message
     await callback.message.edit_text(
-        f"✅ **Tavsiya ma'qullandi!**\nKitob nomi: {rec['title']}\nTavsiya qiluvchi ID: `{user_id}`"
+        f"✅ *Tavsiya ma'qullandi!*\nKitob nomi: {rec['title']}\nTavsiya qiluvchi ID: `{user_id}`"
     )
     await callback.answer()
 
@@ -789,7 +905,6 @@ async def reject_recommendation(callback: CallbackQuery):
         
     rec["status"] = "rejected"
     
-    # Save recommendation status update to channel
     log_rec = f"#RECOMMENDATION\nID: {rec_id}\nSTATUS: rejected"
     try:
         await callback.bot.send_message(chat_id=STORAGE_CHANNEL_ID, text=log_rec)
@@ -798,18 +913,17 @@ async def reject_recommendation(callback: CallbackQuery):
         
     await database.save_index(callback.bot)
     
-    # Notify user
     user_id = rec["user_id"]
     try:
         await callback.bot.send_message(
             chat_id=user_id,
-            text=f"Afsuski, siz tavsiya qilgan **'{rec['title']}'** kitobi adminlar tomonidan rad etildi."
+            text=f"Afsuski, siz tavsiya qilgan *'{rec['title']}'* kitobi adminlar tomonidan rad etildi."
         )
     except Exception:
         pass
         
     await callback.message.edit_text(
-        f"❌ **Tavsiya rad etildi.**\nKitob nomi: {rec['title']}\nTavsiya qiluvchi ID: `{user_id}`"
+        f"❌ *Tavsiya rad etildi.*\nKitob nomi: {rec['title']}\nTavsiya qiluvchi ID: `{user_id}`"
     )
     await callback.answer()
 
@@ -838,13 +952,13 @@ async def process_bc_text(message: Message, state: FSMContext):
         try:
             await message.bot.send_message(chat_id=user_id, text=text)
             success += 1
-            await asyncio.sleep(0.05) # Prevent flood wait
+            await asyncio.sleep(0.05)
         except Exception:
             fail += 1
             
     await status_msg.delete()
     await message.answer(
-        f"📢 **Xabar tarqatish yakunlandi:**\n\n"
+        f"📢 *Xabar tarqatish yakunlandi:*\n\n"
         f"✅ Muvaffaqiyatli: {success} ta\n"
         f"❌ Muammo yuz berdi: {fail} ta",
         reply_markup=keyboards.get_admin_menu()
@@ -880,7 +994,7 @@ async def process_bc_photo(message: Message, state: FSMContext):
             
     await status_msg.delete()
     await message.answer(
-        f"📢 **Rasm tarqatish yakunlandi:**\n\n"
+        f"📢 *Rasm tarqatish yakunlandi:*\n\n"
         f"✅ Muvaffaqiyatli: {success} ta\n"
         f"❌ Muammo yuz berdi: {fail} ta",
         reply_markup=keyboards.get_admin_menu()
@@ -916,7 +1030,7 @@ async def process_bc_audio(message: Message, state: FSMContext):
             
     await status_msg.delete()
     await message.answer(
-        f"📢 **Audio tarqatish yakunlandi:**\n\n"
+        f"📢 *Audio tarqatish yakunlandi:*\n\n"
         f"✅ Muvaffaqiyatli: {success} ta\n"
         f"❌ Muammo yuz berdi: {fail} ta",
         reply_markup=keyboards.get_admin_menu()
@@ -928,7 +1042,6 @@ async def toggle_subscription(callback: CallbackQuery):
     enabled = not database.settings.get("mandatory_subscription", False)
     database.settings["mandatory_subscription"] = enabled
     
-    # Log to channel history
     log_text = f"#SETTINGS\nMANDATORY_SUBSCRIPTION: {'ON' if enabled else 'OFF'}"
     try:
         await callback.bot.send_message(chat_id=STORAGE_CHANNEL_ID, text=log_text)
@@ -936,8 +1049,6 @@ async def toggle_subscription(callback: CallbackQuery):
         pass
         
     await database.save_index(callback.bot)
-    
-    # Edit markup
     await callback.message.edit_reply_markup(reply_markup=keyboards.get_subscription_manage_keyboard(enabled))
     await callback.answer("Majburiy obuna holati o'zgartirildi.")
 
@@ -950,9 +1061,9 @@ async def list_required_channels(callback: CallbackQuery):
         
     text_list = []
     for ch_id, ch_info in database.required_channels.items():
-        text_list.append(f"• **{ch_info['title']}** (ID: {ch_id})\n  Link: {ch_info['url']}")
+        text_list.append(f"• *{ch_info['title']}* (ID: {ch_id})\n  Link: {ch_info['url']}")
         
-    text = "📢 **Majburiy kanallar ro'yxati:**\n\n" + "\n\n".join(text_list)
+    text = "📢 *Majburiy kanallar ro'yxati:*\n\n" + "\n\n".join(text_list)
     await callback.message.answer(text)
     await callback.answer()
 
@@ -975,7 +1086,6 @@ async def process_add_sub_channel_id(message: Message, state: FSMContext):
         await state.clear()
         return
         
-    # Verify bot is admin in this channel
     try:
         member = await message.bot.get_chat_member(chat_id=ch_id, user_id=message.bot.id)
         if member.status not in ["administrator", "creator"]:
@@ -1014,7 +1124,6 @@ async def process_add_sub_channel_url(message: Message, state: FSMContext):
         "status": "active"
     }
     
-    # Log to storage channel
     log_text = (
         "#REQUIRED_CHANNEL\n"
         f"ID: {ch_id}\n"
@@ -1030,7 +1139,7 @@ async def process_add_sub_channel_url(message: Message, state: FSMContext):
     await database.save_index(message.bot)
     
     await message.answer(
-        f"✅ Kanal majburiy obuna ro'yxatiga qo'shildi:\n**{title}** (ID: {ch_id})",
+        f"✅ Kanal majburiy obuna ro'yxatiga qo'shildi:\n*{title}* (ID: {ch_id})",
         reply_markup=keyboards.get_admin_menu()
     )
 
@@ -1053,7 +1162,6 @@ async def process_del_sub_channel(callback: CallbackQuery):
     if ch_id in database.required_channels:
         del_info = database.required_channels.pop(ch_id)
         
-        # Log to storage channel
         log_text = (
             "#REQUIRED_CHANNEL\n"
             f"ID: {ch_id}\n"

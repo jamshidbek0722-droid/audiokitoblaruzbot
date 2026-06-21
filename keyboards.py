@@ -3,13 +3,20 @@ from aiogram.types import ReplyKeyboardMarkup, InlineKeyboardMarkup, KeyboardBut
 
 def get_main_menu(is_user_admin: bool = False) -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
-    builder.row(KeyboardButton(text="📚 Janrlar"), KeyboardButton(text="🔍 Qidiruv"))
+    # Row 1: Books (full width)
+    builder.row(KeyboardButton(text="📚 Kitoblar"))
+    # Row 2: Favorites & History (side-by-side)
     builder.row(KeyboardButton(text="⭐ Sevimlilar"), KeyboardButton(text="🕒 Tarix"))
-    builder.row(KeyboardButton(text="👤 Profil"), KeyboardButton(text="💡 Kitob Tavsiya Qilish"))
-    builder.row(KeyboardButton(text="ℹ️ Yordam"))
+    # Row 3: Recommendations & Search (side-by-side)
+    builder.row(KeyboardButton(text="💡 Kitob Tavsiya Qilish"), KeyboardButton(text="🔍 Qidiruv"))
+    # Row 4: Profile & Help (side-by-side)
+    builder.row(KeyboardButton(text="👤 Profil"), KeyboardButton(text="ℹ️ Yordam"))
+    
     if is_user_admin:
+        # Row 5: Admin Panel
         builder.row(KeyboardButton(text="⚙️ Admin Panel"))
-    builder.adjust(2)
+    
+    builder.adjust(1, 2, 2, 2, 1 if is_user_admin else 0)
     return builder.as_markup(resize_keyboard=True)
 
 def get_cancel_keyboard() -> ReplyKeyboardMarkup:
@@ -28,8 +35,9 @@ def get_admin_menu() -> ReplyKeyboardMarkup:
     builder.row(KeyboardButton(text="📊 Statistika"), KeyboardButton(text="📁 Janrlarni boshqarish"))
     builder.row(KeyboardButton(text="📚 Kitoblarni boshqarish"), KeyboardButton(text="💡 Tavsiyalar"))
     builder.row(KeyboardButton(text="📢 Xabar yuborish"), KeyboardButton(text="👥 Adminlar"))
-    builder.row(KeyboardButton(text="🔐 Majburiy obuna"), KeyboardButton(text="🔄 Bazani yangilash"))
-    builder.row(KeyboardButton(text="📥 Bazani eksport qilish"), KeyboardButton(text="🏠 Asosiy menyu"))
+    builder.row(KeyboardButton(text="🔐 Majburiy obuna"), KeyboardButton(text="📝 Footer matnini sozlash"))
+    builder.row(KeyboardButton(text="🔄 Bazani yangilash"), KeyboardButton(text="📥 Bazani eksport qilish"))
+    builder.row(KeyboardButton(text="🏠 Asosiy menyu"))
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
 
@@ -97,6 +105,16 @@ def get_book_details_keyboard(book_id: str, is_fav: bool, has_pdf: bool) -> Inli
     
     fav_text = "⭐ Sevimlilardan o'chirish" if is_fav else "⭐ Sevimlilarga qo'shish"
     builder.row(InlineKeyboardButton(text=fav_text, callback_data=f"toggle_fav:{book_id}"))
+    
+    # Add inline rating buttons
+    builder.row(
+        InlineKeyboardButton(text="⭐ 1", callback_data=f"rate_b:{book_id}:1"),
+        InlineKeyboardButton(text="⭐ 2", callback_data=f"rate_b:{book_id}:2"),
+        InlineKeyboardButton(text="⭐ 3", callback_data=f"rate_b:{book_id}:3"),
+        InlineKeyboardButton(text="⭐ 4", callback_data=f"rate_b:{book_id}:4"),
+        InlineKeyboardButton(text="⭐ 5", callback_data=f"rate_b:{book_id}:5")
+    )
+    
     builder.row(InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_to_books"))
     return builder.as_markup()
 
@@ -131,4 +149,51 @@ def get_pagination_keyboard(current_page: int, total_pages: int, prefix: str) ->
     if current_page < total_pages:
         buttons.append(InlineKeyboardButton(text="Keyingi ➡️", callback_data=f"{prefix}:{current_page + 1}"))
     builder.row(*buttons)
+    return builder.as_markup()
+
+# New keyboards for refactored features
+def get_book_rating_keyboard(book_id: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="⭐ 1", callback_data=f"rate_b:{book_id}:1"),
+        InlineKeyboardButton(text="⭐ 2", callback_data=f"rate_b:{book_id}:2"),
+        InlineKeyboardButton(text="⭐ 3", callback_data=f"rate_b:{book_id}:3"),
+        InlineKeyboardButton(text="⭐ 4", callback_data=f"rate_b:{book_id}:4"),
+        InlineKeyboardButton(text="⭐ 5", callback_data=f"rate_b:{book_id}:5")
+    )
+    return builder.as_markup()
+
+def get_profile_options_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="📝 Profilni to'ldirish / Tahrirlash", callback_data="complete_profile"))
+    return builder.as_markup()
+
+def get_gender_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="🙋‍♂️ Erkak", callback_data="profile_gender:Erkak"),
+        InlineKeyboardButton(text="🙋‍♀️ Ayol", callback_data="profile_gender:Ayol")
+    )
+    return builder.as_markup()
+
+def get_regions_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    regions = [
+        "Toshkent", "Andijon", "Buxoro", "Farg'ona", "Jizzax", 
+        "Xorazm", "Namangan", "Navoiy", "Qashqadaryo", "Samarqand", 
+        "Sirdaryo", "Surxondaryo", "Qoraqalpog'iston Res."
+    ]
+    for r in regions:
+        builder.row(InlineKeyboardButton(text=r, callback_data=f"profile_region:{r}"))
+    builder.adjust(2)
+    return builder.as_markup()
+
+def get_help_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="📩 Adminga xabar yuborish", callback_data="user_contact_admin"))
+    return builder.as_markup()
+
+def get_admin_reply_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="✍️ Javob berish", callback_data=f"admin_reply_user:{user_id}"))
     return builder.as_markup()

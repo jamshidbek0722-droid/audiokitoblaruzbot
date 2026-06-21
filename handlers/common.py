@@ -1,7 +1,7 @@
 from aiogram import Router, F, BaseMiddleware
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, CallbackQuery, TelegramObject
-from database import register_user, settings, required_channels, is_admin
+import database
 from keyboards import get_main_menu, get_subscription_keyboard
 import logging
 
@@ -17,11 +17,11 @@ class SubscriptionMiddleware(BaseMiddleware):
         user_id = user.id
         
         # Exempt admins and owners
-        if is_admin(user_id):
+        if database.is_admin(user_id):
             return await handler(event, data)
             
-        is_sub_enabled = settings.get("mandatory_subscription", False)
-        if is_sub_enabled and required_channels:
+        is_sub_enabled = database.settings.get("mandatory_subscription", False)
+        if is_sub_enabled and database.required_channels:
             # Allow /start and check_sub callback
             if isinstance(event, Message) and event.text:
                 if event.text.startswith("/start"):
@@ -31,7 +31,7 @@ class SubscriptionMiddleware(BaseMiddleware):
                 
             bot = data.get("bot")
             unsubscribed = []
-            for ch_id, ch_info in required_channels.items():
+            for ch_id, ch_info in database.required_channels.items():
                 try:
                     member = await bot.get_chat_member(chat_id=ch_id, user_id=user_id)
                     if member.status not in ["member", "administrator", "creator"]:
@@ -59,14 +59,14 @@ async def start_cmd(message: Message):
     full_name = message.from_user.full_name
     
     # Register the user
-    await register_user(user_id, username, full_name, message.bot)
+    await database.register_user(user_id, username, full_name, message.bot)
     
-    is_user_admin = is_admin(user_id)
-    is_sub_enabled = settings.get("mandatory_subscription", False)
+    is_user_admin = database.is_admin(user_id)
+    is_sub_enabled = database.settings.get("mandatory_subscription", False)
     
-    if is_sub_enabled and required_channels and not is_user_admin:
+    if is_sub_enabled and database.required_channels and not is_user_admin:
         unsubscribed = []
-        for ch_id, ch_info in required_channels.items():
+        for ch_id, ch_info in database.required_channels.items():
             try:
                 member = await message.bot.get_chat_member(chat_id=ch_id, user_id=user_id)
                 if member.status not in ["member", "administrator", "creator"]:
@@ -94,14 +94,14 @@ async def start_cmd(message: Message):
 @router.message(F.text == "ℹ️ Yordam")
 async def help_cmd(message: Message):
     help_text = (
-        "📚 **Botdan foydalanish bo'yicha yordam:**\n\n"
-        "• **📚 Janrlar**: Audiokitoblarni janrlar bo'yicha ko'rish.\n"
-        "• **🔍 Qidiruv**: Kitoblarni nomi yoki muallifi bo'yicha qidirish.\n"
-        "• **⭐ Sevimlilar**: Sevimli kitoblaringiz ro'yxati.\n"
-        "• **🕒 Tarix**: Oxirgi tinglangan kitoblar.\n"
-        "• **👤 Profil**: Sizning ma'lumotlaringiz.\n"
-        "• **💡 Kitob Tavsiya Qilish**: Botda bo'lmagan kitoblarni tavsiya qilish.\n\n"
-        "Muammolar yuzasidan adminlarga murojaat qiling."
+        "📚 *Botdan foydalanish bo'yicha yordam:*\n\n"
+        "• *📚 Kitoblar*: Audiokitoblarni janrlar bo'yicha ko'rish.\n"
+        "• *🔍 Qidiruv*: Kitoblarni nomi, muallifi yoki kalit so'zlari bo'yicha qidirish.\n"
+        "• *⭐ Sevimlilar*: Sevimli kitoblaringiz ro'yxati.\n"
+        "• *🕒 Tarix*: Oxirgi tinglangan kitoblar.\n"
+        "• *👤 Profil*: Sizning ma'lumotlaringiz (profil to'ldirish).\n"
+        "• *💡 Kitob Tavsiya Qilish*: Botda bo'lmagan kitoblarni tavsiya qilish.\n\n"
+        "Muammolar yuzasidan adminlarga murojaat qiling (Profil yoki Yordam bo'limi orqali)."
     )
     await message.answer(help_text)
 
@@ -111,7 +111,7 @@ async def check_sub_callback(callback: CallbackQuery):
     bot = callback.bot
     
     unsubscribed = []
-    for ch_id, ch_info in required_channels.items():
+    for ch_id, ch_info in database.required_channels.items():
         try:
             member = await bot.get_chat_member(chat_id=ch_id, user_id=user_id)
             if member.status not in ["member", "administrator", "creator"]:
@@ -129,6 +129,6 @@ async def check_sub_callback(callback: CallbackQuery):
             pass
         await callback.message.answer(
             "✅ Rahmat! Kanallarga a'zoligingiz tasdiqlandi.",
-            reply_markup=get_main_menu(is_admin(user_id))
+            reply_markup=get_main_menu(database.is_admin(user_id))
         )
         await callback.answer()
