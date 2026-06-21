@@ -1,7 +1,9 @@
 import asyncio
 import logging
+import os
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiohttp import web
 
 import config
 import database
@@ -19,6 +21,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Dummy web server handler for Render health checks
+async def handle_health(request):
+    return web.Response(text="OK")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_health)
+    
+    # Render allocates a port dynamically via the PORT environment variable
+    port = int(os.getenv("PORT", "8080"))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"Dummy health check web server started on port {port}")
+
 async def on_startup(bot: Bot):
     logger.info("Bot starting up...")
     
@@ -32,7 +50,6 @@ async def on_startup(bot: Bot):
             f"Please verify that the ID is correct and the bot is added as an administrator to the channel!\n"
             f"Error: {e}"
         )
-        # We still continue, but database operations might fail if channel is inaccessible.
         
     # 2. Rebuild index from storage channel
     await database.load_index(bot)
@@ -49,10 +66,7 @@ async def main():
     dp.message.outer_middleware(SubscriptionMiddleware())
     dp.callback_query.outer_middleware(SubscriptionMiddleware())
     
-    # Include routers in priority order:
-    # 1. Admin router (intercepts admin menu commands)
-    # 2. User router (general user queries, FSM search, book menus)
-    # 3. Common router (start, help, basic handlers)
+    # Include routers in priority order
     dp.include_router(admin_router)
     dp.include_router(user_router)
     dp.include_router(common_router)
@@ -60,11 +74,11 @@ async def main():
     # Register startup hook
     dp.startup.register(on_startup)
     
-    # Start polling
-    try:
-        await dp.start_polling(bot)
-    finally:
-        await bot.session.close()
+    # Run both the dummy web server (for Render) and aiogram polling concurrently
+    await asyncio.gather(
+        start_web_server(),
+        dp.start_polling(bot)
+    )
 
 if __name__ == "__main__":
     try:
