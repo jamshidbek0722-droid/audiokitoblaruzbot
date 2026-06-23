@@ -1,8 +1,8 @@
 import uuid
 import logging
-import json
 import io
 import asyncio
+
 from datetime import datetime
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
@@ -159,27 +159,7 @@ async def admin_check_message(message: Message, state: FSMContext):
             reply_markup=keyboards.get_cancel_keyboard()
         )
         return
-        
-    elif text == "🔄 Bazani yangilash":
-        await message.answer("🔄 Baza indeksi yangilanmoqda...")
-        await database.load_index(message.bot)
-        await message.answer("✅ Baza indeksi muvaffaqiyatli yuklandi.")
-        return
-        
-    elif text == "📥 Bazani eksport qilish":
-        data = {
-            "admins": list(database.admins),
-            "categories": database.categories,
-            "books": database.books,
-            "users": {str(k): v for k, v in database.users.items()},
-            "recommendations": database.recommendations,
-            "settings": database.settings,
-            "required_channels": {str(k): v for k, v in database.required_channels.items()}
-        }
-        json_str = json.dumps(data, indent=2, ensure_ascii=False)
-        input_file = BufferedInputFile(bytes(json_str, "utf-8"), filename="database_backup.json")
-        await message.answer_document(document=input_file, caption="📥 Bot ma'lumotlar bazasi zaxira nusxasi (JSON).")
-        return
+
 
 # ----------------- FOOTER EDIT HANDLER -----------------
 @router.message(AdminState.edit_footer)

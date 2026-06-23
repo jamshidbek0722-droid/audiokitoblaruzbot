@@ -37,10 +37,10 @@ def get_admin_menu() -> ReplyKeyboardMarkup:
     builder.row(KeyboardButton(text="📚 Kitoblarni boshqarish"), KeyboardButton(text="💡 Tavsiyalar"))
     builder.row(KeyboardButton(text="📢 Xabar yuborish"), KeyboardButton(text="👥 Adminlar"))
     builder.row(KeyboardButton(text="🔐 Majburiy obuna"), KeyboardButton(text="📝 Footer matnini sozlash"))
-    builder.row(KeyboardButton(text="🔄 Bazani yangilash"), KeyboardButton(text="📥 Bazani eksport qilish"))
     builder.row(KeyboardButton(text="🏠 Asosiy menyu"))
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
+
 
 def get_category_manage_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -96,7 +96,7 @@ def get_categories_layout_keyboard(categories_dict: dict, prefix: str, columns: 
         active_cats.sort(key=lambda x: x["name"])
         
     for cat in active_cats:
-        builder.insert(InlineKeyboardButton(text=cat["name"], callback_data=f"{prefix}:{cat['id']}"))
+        builder.add(InlineKeyboardButton(text=cat["name"], callback_data=f"{prefix}:{cat['id']}"))
         
     builder.adjust(columns)
     
@@ -112,13 +112,14 @@ def get_multi_category_selector(categories_dict: dict, selected_ids: list, prefi
     
     for cat in active_cats:
         marker = "✅ " if cat["id"] in selected_ids else ""
-        builder.insert(InlineKeyboardButton(text=f"{marker}{cat['name']}", callback_data=f"{prefix}_toggle:{cat['id']}"))
+        builder.add(InlineKeyboardButton(text=f"{marker}{cat['name']}", callback_data=f"{prefix}_toggle:{cat['id']}"))
         
     builder.adjust(2)
     builder.row(
         InlineKeyboardButton(text="💾 Tasdiqlash", callback_data=f"{prefix}_confirm"),
         InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm")
     )
+
     return builder.as_markup()
 
 def get_confirmation_keyboard() -> InlineKeyboardMarkup:
