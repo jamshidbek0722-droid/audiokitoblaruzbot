@@ -5,7 +5,7 @@ class AdminBookForm(StatesGroup):
     author = State()
     description = State()
     category = State()
-    keywords = State()  # Added keywords qidiruv step
+    keywords = State()
     audio = State()
     cover = State()
     pdf = State()
@@ -16,7 +16,7 @@ class UserRecForm(StatesGroup):
     author = State()
     description = State()
     category = State()
-    keywords = State()  # Added keywords qidiruv step
+    keywords = State()
     audio = State()
     cover = State()
     pdf = State()
@@ -31,19 +31,34 @@ class AdminState(StatesGroup):
     broadcast_text = State()
     broadcast_photo = State()
     broadcast_audio = State()
-    edit_footer = State()  # Added state to edit custom footer
+    edit_footer = State()
 
 class UserState(StatesGroup):
     search = State()
 
 class UserContactForm(StatesGroup):
-    message = State()  # Added state to send support message to admin
+    message = State()
 
 class AdminReplyForm(StatesGroup):
-    message = State()  # Added state to send reply to user
+    message = State()
 
 class UserProfileForm(StatesGroup):
-    gender = State()  # Added profile completion states
+    gender = State()
     age = State()
     region = State()
     interests = State()
+
+class AdminEditBookState(StatesGroup):
+    select = State()
+    field = State()
+    value = State()
+    audio = State()
+    pdf = State()
+
+class AdminCategoryLayoutState(StatesGroup):
+    select = State()
+    columns = State()
+    order = State()
+
+class AdminSortingState(StatesGroup):
+    select = State()

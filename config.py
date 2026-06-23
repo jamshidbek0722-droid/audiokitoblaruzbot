@@ -16,3 +16,7 @@ if not BOT_TOKEN or not OWNER_ID_RAW or not STORAGE_CHANNEL_ID_RAW:
 OWNER_ID = int(OWNER_ID_RAW)
 STORAGE_CHANNEL_ID = int(STORAGE_CHANNEL_ID_RAW)
 REQUIRED_CHANNEL_IDS = []  # Can also be dynamically loaded/saved in index
+
+# MongoDB Atlas configuration
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://jamshidbek0722_db_user:uXvfHgjfIJYNkWMa@cluster0.am3uqg7.mongodb.net/?appName=Cluster0")
+

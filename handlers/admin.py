@@ -13,7 +13,10 @@ from aiogram.fsm.state import State, StatesGroup
 from config import OWNER_ID, STORAGE_CHANNEL_ID
 import database
 import keyboards
-from states import AdminState, AdminBookForm, AdminReplyForm
+from states import (
+    AdminState, AdminBookForm, AdminReplyForm, 
+    AdminEditBookState, AdminCategoryLayoutState, AdminSortingState
+)
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -67,13 +70,14 @@ async def admin_check_message(message: Message, state: FSMContext):
         
         active_books = [b for b in database.books.values() if b.get("status", "approved") == "approved"]
         books_count = len(active_books)
-        audio_books = len([b for b in active_books if b.get("audio_file_id")])
+        audio_books_count = len([b for b in active_books if b.get("audio_files")])
         pdf_books = len([b for b in active_books if b.get("pdf_file_id")])
         
         # User profile demographics
         completed_profiles = 0
         genders = {"Erkak": 0, "Ayol": 0}
         regions = {}
+        total_listened_seconds = 0
         
         for u in database.users.values():
             profile = u.get("profile")
@@ -85,6 +89,10 @@ async def admin_check_message(message: Message, state: FSMContext):
                 r = profile.get("region")
                 if r:
                     regions[r] = regions.get(r, 0) + 1
+            
+            # Aggregate listening statistics
+            stats = u.get("listening_stats", {})
+            total_listened_seconds += stats.get("total_seconds", 0)
                     
         gender_stats = f"  • Erkak: {genders['Erkak']} ta\n  • Ayol: {genders['Ayol']} ta" if completed_profiles > 0 else "  • Ma'lumot yo'q"
         
@@ -93,15 +101,19 @@ async def admin_check_message(message: Message, state: FSMContext):
             region_list.append(f"  • {reg}: {cnt} ta")
         region_stats = "\n".join(region_list) if region_list else "  • Ma'lumot yo'q"
         
+        # Format total listened hours
+        total_hours = total_listened_seconds / 3600.0
+        
         stats_text = (
             "📊 *Bot Statistikasi:*\n\n"
             f"• *Foydalanuvchilar soni*: {users_count} ta\n"
             f"• *To'ldirilgan profillar*: {completed_profiles} ta\n"
+            f"• *Jami eshitilgan kitoblar soati*: *{total_hours:.2f} soat*\n"
             f"\n*Jins taqsimoti:*\n{gender_stats}\n"
             f"\n*Hududlar bo'yicha taqsimot:*\n{region_stats}\n\n"
             f"• *Faol janrlar soni*: {cats_count} ta\n"
             f"• *Faol kitoblar soni*: {books_count} ta\n"
-            f"• *Audio kitoblar*: {audio_books} ta\n"
+            f"• *Audio kitoblar*: {audio_books_count} ta\n"
             f"• *PDF kitoblar*: {pdf_books} ta"
         )
         await message.answer(stats_text)
@@ -311,7 +323,7 @@ async def process_remove_admin(callback: CallbackQuery):
         await callback.message.edit_text(f"✅ Admin o'chirildi (ID: {del_id}).")
     await callback.answer()
 
-# ----------------- CATEGORY MANAGEMENT -----------------
+# ----------------- CATEGORY MANAGEMENT (WITH COLUMNS AND ORDER) -----------------
 @router.callback_query(F.data == "admin_add_category")
 async def start_add_category(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AdminState.add_category)
@@ -333,6 +345,11 @@ async def process_add_category(message: Message, state: FSMContext):
         "status": "active"
     }
     
+    # Append to order list if exists
+    order = database.settings.setdefault("categories_order", [])
+    if cat_id not in order:
+        order.append(cat_id)
+        
     log_text = f"#CATEGORY\nID: {cat_id}\nNAME: {name}\nSTATUS: active"
     await message.bot.send_message(chat_id=STORAGE_CHANNEL_ID, text=log_text)
     
@@ -360,6 +377,11 @@ async def process_del_category(callback: CallbackQuery):
     if cat_id in database.categories:
         database.categories[cat_id]["status"] = "removed"
         
+        # Remove from order settings
+        order = database.settings.get("categories_order", [])
+        if cat_id in order:
+            order.remove(cat_id)
+            
         log_text = f"#CATEGORY\nID: {cat_id}\nNAME: {database.categories[cat_id]['name']}\nSTATUS: removed"
         await callback.bot.send_message(chat_id=STORAGE_CHANNEL_ID, text=log_text)
         
@@ -367,7 +389,110 @@ async def process_del_category(callback: CallbackQuery):
         await callback.message.edit_text("✅ Janr o'chirildi (Mavjud kitoblar saqlanib qoladi).")
     await callback.answer()
 
-# ----------------- ADMIN BOOK CREATION FLOW (REQUIRED AUDIO) -----------------
+# ----------------- CATEGORY LAYOUT CONFIGURATION -----------------
+@router.callback_query(F.data == "admin_layout_category")
+async def start_category_layout_config(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminCategoryLayoutState.select)
+    current_cols = database.settings.get("categories_columns", 2)
+    kb = keyboards.get_admin_layout_options_keyboard(current_cols)
+    await callback.message.edit_text(
+        f"📁 *Janrlar ustunlari va tartibini sozlash:*\n\n"
+        f"Hozirgi ustunlar soni: *{current_cols} ustun*",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+@router.callback_query(AdminCategoryLayoutState.select, F.data.startswith("set_cols:"))
+async def process_set_columns(callback: CallbackQuery, state: FSMContext):
+    cols = int(callback.data.split(":")[1])
+    database.settings["categories_columns"] = cols
+    await database.save_index(callback.bot)
+    
+    # Redraw
+    kb = keyboards.get_admin_layout_options_keyboard(cols)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
+    await callback.answer(f"Ustunlar soni {cols} qilib belgilandi.")
+
+@router.callback_query(AdminCategoryLayoutState.select, F.data == "admin_reorder_cats")
+async def start_category_reorder(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminCategoryLayoutState.order)
+    
+    # Fetch active categories
+    active_cats = [c for c in database.categories.values() if c.get("status", "active") == "active"]
+    order = database.settings.get("categories_order", [])
+    
+    # Align order list
+    order_map = {cat_id: index for index, cat_id in enumerate(order)}
+    active_cats.sort(key=lambda x: order_map.get(x["id"], 9999))
+    
+    # Store list of IDs in FSM
+    reorder_list = [c["id"] for c in active_cats]
+    await state.update_data(reorder_list=reorder_list)
+    
+    categories_list = [(c["id"], c["name"]) for c in active_cats]
+    kb = keyboards.get_admin_reorder_keyboard(categories_list)
+    
+    await callback.message.edit_text(
+        "🔢 *Janrlarni tartibini o'zgartiring:*\n\n"
+        "Tepadagi va pastdagi o'qlar yordamida janrlar o'rnini almashtiring:",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+@router.callback_query(AdminCategoryLayoutState.order, F.data.startswith("reorder_move:"))
+async def process_category_reorder_move(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    cat_id = parts[1]
+    direction = parts[2]
+    
+    fsm_data = await state.get_data()
+    reorder_list = list(fsm_data.get("reorder_list", []))
+    
+    if cat_id not in reorder_list:
+        await callback.answer()
+        return
+        
+    idx = reorder_list.index(cat_id)
+    if direction == "up" and idx > 0:
+        reorder_list[idx], reorder_list[idx - 1] = reorder_list[idx - 1], reorder_list[idx]
+    elif direction == "down" and idx < len(reorder_list) - 1:
+        reorder_list[idx], reorder_list[idx + 1] = reorder_list[idx + 1], reorder_list[idx]
+        
+    await state.update_data(reorder_list=reorder_list)
+    
+    # Rebuild keyboard
+    categories_list = []
+    for cid in reorder_list:
+        cat_info = database.categories.get(cid)
+        if cat_info:
+            categories_list.append((cid, cat_info["name"]))
+            
+    kb = keyboards.get_admin_reorder_keyboard(categories_list)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
+    await callback.answer()
+
+@router.callback_query(AdminCategoryLayoutState.order, F.data == "reorder_confirm")
+async def process_category_reorder_confirm(callback: CallbackQuery, state: FSMContext):
+    fsm_data = await state.get_data()
+    reorder_list = fsm_data.get("reorder_list", [])
+    await state.clear()
+    
+    database.settings["categories_order"] = reorder_list
+    await database.save_index(callback.bot)
+    
+    await callback.message.edit_text(
+        "✅ Janrlar tartibi muvaffaqiyatli saqlandi!",
+        reply_markup=keyboards.get_category_manage_keyboard()
+    )
+    await callback.answer()
+
+# ----------------- ADMIN BOOK CREATION FLOW (MULTI-AUDIOS AND GENRES) -----------------
 @router.callback_query(F.data == "admin_add_book")
 async def start_add_book(callback: CallbackQuery, state: FSMContext):
     active_cats = {k: v for k, v in database.categories.items() if v.get("status", "active") == "active"}
@@ -402,26 +527,46 @@ async def process_book_desc(message: Message, state: FSMContext):
     else:
         await state.update_data(description=text)
         
-    active_cats = {k: v for k, v in database.categories.items() if v.get("status", "active") == "active"}
-    kb = keyboards.get_categories_inline(active_cats, "admin_book_cat")
-    
+    # Multi-category selector grid
+    await state.update_data(selected_categories=[])
     await state.set_state(AdminBookForm.category)
-    await message.answer("📁 Janrni tanlang:", reply_markup=kb)
-    await message.answer("Tugmalardan foydalaning. Bekor qilish uchun '❌ Bekor qilish' deb yozing.")
-
-@router.callback_query(AdminBookForm.category, F.data.startswith("admin_book_cat:"))
-async def process_book_category(callback: CallbackQuery, state: FSMContext):
-    cat_id = callback.data.split(":")[1]
-    await state.update_data(category=cat_id)
-    await state.set_state(AdminBookForm.keywords)
     
+    kb = keyboards.get_multi_category_selector(database.categories, [], "admin_book_cat")
+    await message.answer("📁 Janrlarni tanlang (Bir nechta tanlashingiz mumkin) va 'Tasdiqlash' bosing:", reply_markup=kb)
+
+@router.callback_query(AdminBookForm.category, F.data.startswith("admin_book_cat_toggle:"))
+async def process_book_category_toggle(callback: CallbackQuery, state: FSMContext):
+    cat_id = callback.data.split(":")[1]
+    data = await state.get_data()
+    selected = data.get("selected_categories", [])
+    
+    if cat_id in selected:
+        selected.remove(cat_id)
+    else:
+        selected.append(cat_id)
+        
+    await state.update_data(selected_categories=selected)
+    
+    kb = keyboards.get_multi_category_selector(database.categories, selected, "admin_book_cat")
     try:
-        await callback.message.delete()
+        await callback.message.edit_reply_markup(reply_markup=kb)
     except Exception:
         pass
+    await callback.answer()
+
+@router.callback_query(AdminBookForm.category, F.data == "admin_book_cat_confirm")
+async def process_book_category_confirm(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    selected = data.get("selected_categories", [])
+    
+    if not selected:
+        await callback.answer("Kamida bitta janr tanlash majburiy!", show_alert=True)
+        return
         
+    await state.set_state(AdminBookForm.keywords)
+    await callback.message.delete()
     await callback.message.answer(
-        "🔍 Kitobni qidirishda yordam beradigan kalit so'zlarni (vergul bilan ajratib) kiriting (ixtiyoriy, masalan: sarguzasht, tarix, roman):\n",
+        "🔍 Kitobni qidirishda yordam beradigan kalit so'zlarni (vergul bilan ajratib) kiriting (ixtiyoriy):\n",
         reply_markup=keyboards.get_skip_cancel_keyboard()
     )
     await callback.answer()
@@ -436,68 +581,150 @@ async def process_book_keywords(message: Message, state: FSMContext):
         
     await state.update_data(keywords=keywords)
     await state.set_state(AdminBookForm.audio)
+    await state.update_data(audio_files=[])
     
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(
+        keyboards.InlineKeyboardButton(text="✅ Yakunlash", callback_data="admin_book_audio_done"),
+        keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm")
+    )
     await message.answer(
-        "🎧 Kitobning audio faylini yuboring (MAJBURIY - audio yoki hujjat formatida):",
-        reply_markup=keyboards.get_cancel_keyboard()
+        "🎧 Kitobning audio fayllarini yuboring (MAJBURIY - bir yoki bir nechta audio yuboring):\n"
+        "Fayllarni yuborib bo'lgach, '✅ Yakunlash' tugmasini bosing.",
+        reply_markup=builder.as_markup()
     )
 
 @router.message(AdminBookForm.audio)
-async def process_book_audio(message: Message, state: FSMContext):
+async def process_book_audio_upload(message: Message, state: FSMContext):
     file_id = None
     file_type = None
+    duration = 0
     
     if message.audio:
         file_id = message.audio.file_id
         file_type = "audio"
-    elif message.document:
+        duration = message.audio.duration or 0
+    elif message.document and message.document.mime_type and message.document.mime_type.startswith("audio/"):
         file_id = message.document.file_id
         file_type = "document"
         
     if not file_id:
         await message.answer(
-            "⚠️ Xatolik! Kitob yaratish uchun audio fayl yuborish majburiydir!\n"
-            "Iltimos, audio yoki hujjat yuboring. Bekor qilish uchun '❌ Bekor qilish' tugmasini bosing."
+            "⚠️ Xatolik! Iltimos, audio fayl yuboring yoki bekor qilish uchun 'Bekor qilish' yozing."
         )
         return
         
-    await state.update_data(audio_file_id=file_id, audio_file_type=file_type)
-    await state.set_state(AdminBookForm.cover)
-    await message.answer(
-        "🖼️ Kitob muqovasi uchun rasm yuboring (ixtiyoriy):",
-        reply_markup=keyboards.get_skip_cancel_keyboard()
+    data = await state.get_data()
+    audio_files = data.get("audio_files", [])
+    audio_files.append({
+        "file_id": file_id,
+        "file_type": file_type,
+        "duration": duration
+    })
+    await state.update_data(audio_files=audio_files)
+    
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(
+        keyboards.InlineKeyboardButton(text="✅ Yakunlash", callback_data="admin_book_audio_done"),
+        keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm")
     )
+    await message.answer(
+        f"✅ {len(audio_files)}-audio qabul qilindi. Yana yuborishingiz yoki yakunlashingiz mumkin:",
+        reply_markup=builder.as_markup()
+    )
+
+@router.callback_query(AdminBookForm.audio, F.data == "admin_book_audio_done")
+async def process_book_audio_done(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    audio_files = data.get("audio_files", [])
+    
+    if not audio_files:
+        await callback.answer("Kamida bitta audio fayl yuborishingiz majburiy!", show_alert=True)
+        return
+        
+    await state.set_state(AdminBookForm.cover)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(
+        keyboards.InlineKeyboardButton(text="⏭️ O'tkazib yuborish", callback_data="admin_book_cover_skip"),
+        keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm")
+    )
+    await callback.message.answer(
+        "🖼️ Kitob muqovasi uchun rasm yuboring (ixtiyoriy):",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+@router.callback_query(AdminBookForm.cover, F.data == "admin_book_cover_skip")
+async def process_book_cover_skip(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(cover_file_id="")
+    await state.set_state(AdminBookForm.pdf)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(
+        keyboards.InlineKeyboardButton(text="⏭️ O'tkazib yuborish", callback_data="admin_book_pdf_skip"),
+        keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm")
+    )
+    await callback.message.answer(
+        "📄 Kitobning PDF faylini yuboring (ixtiyoriy):",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
 
 @router.message(AdminBookForm.cover)
 async def process_book_cover(message: Message, state: FSMContext):
-    if message.text == "⏭️ O'tkazib yuborish":
-        await state.update_data(cover_file_id="")
-    elif message.photo:
-        await state.update_data(cover_file_id=message.photo[-1].file_id)
-    else:
-        await message.answer("Iltimos, rasm yuboring yoki 'O'tkazib yuborish' tugmasini bosing.")
+    if not message.photo:
+        await message.answer("Iltimos, rasm yuboring yoki o'tkazib yuboring.")
         return
         
+    await state.update_data(cover_file_id=message.photo[-1].file_id)
     await state.set_state(AdminBookForm.pdf)
+    
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(
+        keyboards.InlineKeyboardButton(text="⏭️ O'tkazib yuborish", callback_data="admin_book_pdf_skip"),
+        keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm")
+    )
     await message.answer(
         "📄 Kitobning PDF faylini yuboring (ixtiyoriy):",
-        reply_markup=keyboards.get_skip_cancel_keyboard()
+        reply_markup=builder.as_markup()
     )
+
+@router.callback_query(AdminBookForm.pdf, F.data == "admin_book_pdf_skip")
+async def process_book_pdf_skip(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(pdf_file_id="")
+    await show_admin_book_summary(callback.message, state)
+    await callback.answer()
 
 @router.message(AdminBookForm.pdf)
 async def process_book_pdf(message: Message, state: FSMContext):
-    if message.text == "⏭️ O'tkazib yuborish":
-        await state.update_data(pdf_file_id="")
-    elif message.document:
-        await state.update_data(pdf_file_id=message.document.file_id)
-    else:
-        await message.answer("Iltimos, hujjat yuboring yoki 'O'tkazib yuborish' tugmasini bosing.")
+    if not message.document:
+        await message.answer("Iltimos, hujjat yuboring yoki o'tkazib yuboring.")
         return
         
+    await state.update_data(pdf_file_id=message.document.file_id)
+    await show_admin_book_summary(message, state)
+
+async def show_admin_book_summary(message: Message, state: FSMContext):
     data = await state.get_data()
-    cat_name = database.categories.get(data["category"], {}).get("name", "Noma'lum")
+    
+    cat_names = []
+    for c_id in data["selected_categories"]:
+        cat_info = database.categories.get(c_id)
+        if cat_info:
+            cat_names.append(cat_info["name"])
+    cat_str = ", ".join(cat_names) if cat_names else "Noma'lum"
     
     desc_val = data.get('description') or "yo'q"
+    audio_files = data.get("audio_files", [])
     cover_status = "bor" if data.get('cover_file_id') else "yo'q"
     pdf_status = "bor" if data.get('pdf_file_id') else "yo'q"
     kws_val = ", ".join(data.get("keywords", [])) if data.get("keywords") else "yo'q"
@@ -506,10 +733,10 @@ async def process_book_pdf(message: Message, state: FSMContext):
         "📚 *Kitob tafsilotlari:*\n\n"
         f"• *Nomi*: {data['title']}\n"
         f"• *Muallif*: {data['author']}\n"
-        f"• *Janr*: {cat_name}\n"
+        f"• *Janrlar*: {cat_str}\n"
         f"• *Kalit so'zlar*: {kws_val}\n"
         f"• *Tavsif*: {desc_val}\n"
-        f"• *Audio*: bor (yuborilgan)\n"
+        f"• *Audio qismlar*: {len(audio_files)} ta\n"
         f"• *Muqova*: {cover_status}\n"
         f"• *PDF*: {pdf_status}\n\n"
         "Tizimga saqlashni tasdiqlaysizmi?"
@@ -545,16 +772,24 @@ async def process_book_confirmation(callback: CallbackQuery, state: FSMContext):
     bot = callback.bot
     book_id = str(uuid.uuid4())[:8]
     
-    audio_msg_id = None
-    try:
-        if data["audio_file_type"] == "document":
-            sent_audio = await bot.send_document(chat_id=STORAGE_CHANNEL_ID, document=data["audio_file_id"])
-        else:
-            sent_audio = await bot.send_audio(chat_id=STORAGE_CHANNEL_ID, audio=data["audio_file_id"])
-        audio_msg_id = sent_audio.message_id
-    except Exception as e:
-        logger.error(f"Error uploading audio to channel: {e}")
-        
+    # Upload/Forward each audio to the storage channel
+    uploaded_audios = []
+    for idx, f in enumerate(data["audio_files"], 1):
+        try:
+            if f["file_type"] == "document":
+                sent_audio = await bot.send_document(chat_id=STORAGE_CHANNEL_ID, document=f["file_id"])
+            else:
+                sent_audio = await bot.send_audio(chat_id=STORAGE_CHANNEL_ID, audio=f["file_id"])
+            
+            uploaded_audios.append({
+                "file_id": f["file_id"],
+                "file_type": f["file_type"],
+                "duration": f.get("duration", 0),
+                "message_id": sent_audio.message_id
+            })
+        except Exception as e:
+            logger.error(f"Error uploading audio part {idx} to channel: {e}")
+            
     if data["cover_file_id"]:
         try:
             await bot.send_photo(chat_id=STORAGE_CHANNEL_ID, photo=data["cover_file_id"])
@@ -572,14 +807,13 @@ async def process_book_confirmation(callback: CallbackQuery, state: FSMContext):
         "title": data["title"],
         "author": data["author"],
         "description": data["description"].replace("\n", "\\n") if data["description"] else "",
-        "category": data["category"],
+        "categories": data["selected_categories"],
         "keywords": data.get("keywords", []),
         "ratings": {},
-        "audio_file_id": data["audio_file_id"],
-        "audio_file_type": data["audio_file_type"],
-        "audio_message_id": audio_msg_id,
+        "audio_files": uploaded_audios,
         "pdf_file_id": data["pdf_file_id"],
         "cover_file_id": data["cover_file_id"],
+        "duration": sum(f.get("duration", 0) for f in uploaded_audios),
         "source": "admin",
         "status": "approved",
         "created_at": datetime.now().isoformat()
@@ -587,7 +821,6 @@ async def process_book_confirmation(callback: CallbackQuery, state: FSMContext):
     
     database.books[book_id] = book_entry
     
-    audio_msg_val = audio_msg_id if audio_msg_id else "noma'lum"
     pdf_val = data['pdf_file_id'] if data['pdf_file_id'] else "yoq"
     cover_val = data['cover_file_id'] if data['cover_file_id'] else "yoq"
     kws_str = ", ".join(data.get("keywords", [])) if data.get("keywords") else "yoq"
@@ -598,10 +831,10 @@ async def process_book_confirmation(callback: CallbackQuery, state: FSMContext):
         f"TITLE: {data['title']}\n"
         f"AUTHOR: {data['author']}\n"
         f"DESCRIPTION: {book_entry['description']}\n"
-        f"CATEGORY: {data['category']}\n"
+        f"CATEGORY: {data['selected_categories'][0] if data['selected_categories'] else 'yoq'}\n"
         f"KEYWORDS: {kws_str}\n"
-        f"AUDIO_FILE_ID: {data['audio_file_id']}\n"
-        f"AUDIO_MESSAGE_ID: {audio_msg_val}\n"
+        f"AUDIO_FILE_ID: {uploaded_audios[0]['file_id'] if uploaded_audios else 'yoq'}\n"
+        f"AUDIO_MESSAGE_ID: {uploaded_audios[0]['message_id'] if uploaded_audios else 'yoq'}\n"
         f"PDF_FILE_ID: {pdf_val}\n"
         f"COVER_FILE_ID: {cover_val}\n"
         f"SOURCE: admin\n"
@@ -623,12 +856,7 @@ async def process_book_confirmation(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
-# ----------------- EDIT BOOK -----------------
-class AdminEditBookState(StatesGroup):
-    select = State()
-    field = State()
-    value = State()
-
+# ----------------- EDIT BOOK (WITH MULTI-AUDIOS AND PDF EDITING) -----------------
 @router.callback_query(F.data == "admin_edit_book")
 async def start_edit_book(callback: CallbackQuery, state: FSMContext):
     active_books = [b for b in database.books.values() if b.get("status", "approved") == "approved"]
@@ -659,6 +887,11 @@ async def select_book_to_edit(callback: CallbackQuery, state: FSMContext):
         keyboards.InlineKeyboardButton(text="Tavsifi (Description)", callback_data="edit_f:description"),
         keyboards.InlineKeyboardButton(text="Kalit so'zlar", callback_data="edit_f:keywords")
     )
+    builder.row(
+        keyboards.InlineKeyboardButton(text="Audioni tahrirlash", callback_data="edit_f:audio"),
+        keyboards.InlineKeyboardButton(text="PDFni tahrirlash", callback_data="edit_f:pdf")
+    )
+    builder.row(keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm"))
     
     await callback.message.edit_text("Qaysi maydonni tahrirlamoqchisiz?", reply_markup=builder.as_markup())
     await callback.answer()
@@ -667,24 +900,166 @@ async def select_book_to_edit(callback: CallbackQuery, state: FSMContext):
 async def select_field_to_edit(callback: CallbackQuery, state: FSMContext):
     field = callback.data.split(":")[1]
     await state.update_data(field=field)
-    await state.set_state(AdminEditBookState.value)
     
     try:
         await callback.message.delete()
     except Exception:
         pass
         
-    if field == "keywords":
+    if field == "audio":
+        await state.set_state(AdminEditBookState.audio)
+        await state.update_data(audio_files=[])
+        builder = keyboards.InlineKeyboardBuilder()
+        builder.row(
+            keyboards.InlineKeyboardButton(text="✅ Yakunlash", callback_data="admin_edit_audio_done"),
+            keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm")
+        )
         await callback.message.answer(
-            "Yangi kalit so'zlarni vergul bilan ajratib yuboring:",
+            "Kitobning YANGI audio fayllarini yuboring (avvalgilari o'rniga o'rnatiladi):\n"
+            "Mavjud barcha qismlarni yuborib bo'lgach, '✅ Yakunlash' bosing.",
+            reply_markup=builder.as_markup()
+        )
+    elif field == "pdf":
+        await state.set_state(AdminEditBookState.pdf)
+        await callback.message.answer(
+            "YANGI PDF faylini yuboring (ixtiyoriy):",
             reply_markup=keyboards.get_cancel_keyboard()
         )
     else:
-        await callback.message.answer(
-            f"Yangi qiymatni yuboring (Maydon: {field}):",
-            reply_markup=keyboards.get_cancel_keyboard()
-        )
+        await state.set_state(AdminEditBookState.value)
+        if field == "keywords":
+            await callback.message.answer(
+                "Yangi kalit so'zlarni vergul bilan ajratib yuboring:",
+                reply_markup=keyboards.get_cancel_keyboard()
+            )
+        else:
+            await callback.message.answer(
+                f"Yangi qiymatni yuboring (Maydon: {field}):",
+                reply_markup=keyboards.get_cancel_keyboard()
+            )
     await callback.answer()
+
+@router.message(AdminEditBookState.audio)
+async def process_edit_audio_upload(message: Message, state: FSMContext):
+    file_id = None
+    file_type = None
+    duration = 0
+    
+    if message.audio:
+        file_id = message.audio.file_id
+        file_type = "audio"
+        duration = message.audio.duration or 0
+    elif message.document and message.document.mime_type and message.document.mime_type.startswith("audio/"):
+        file_id = message.document.file_id
+        file_type = "document"
+        
+    if not file_id:
+        await message.answer("Iltimos, audio fayl yuboring yoki 'Yakunlash' tugmasini bosing.")
+        return
+        
+    data = await state.get_data()
+    audio_files = data.get("audio_files", [])
+    audio_files.append({
+        "file_id": file_id,
+        "file_type": file_type,
+        "duration": duration
+    })
+    await state.update_data(audio_files=audio_files)
+    
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(
+        keyboards.InlineKeyboardButton(text="✅ Yakunlash", callback_data="admin_edit_audio_done"),
+        keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm")
+    )
+    await message.answer(
+        f"✅ {len(audio_files)}-audio qabul qilindi. Yana yuborishingiz yoki yakunlashingiz mumkin:",
+        reply_markup=builder.as_markup()
+    )
+
+@router.callback_query(AdminEditBookState.audio, F.data == "admin_edit_audio_done")
+async def process_edit_audio_done(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    audio_files = data.get("audio_files", [])
+    
+    if not audio_files:
+        await callback.answer("Kamida bitta audio fayl yuboring!", show_alert=True)
+        return
+        
+    book_id = data["book_id"]
+    await state.clear()
+    
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    status_msg = await callback.message.answer("⌛ Audio fayllar saqlash kanaliga yuborilmoqda. Iltimos, kuting...")
+    
+    # Upload to storage channel
+    uploaded_audios = []
+    for idx, f in enumerate(audio_files, 1):
+        try:
+            if f["file_type"] == "document":
+                sent_audio = await callback.bot.send_document(chat_id=STORAGE_CHANNEL_ID, document=f["file_id"])
+            else:
+                sent_audio = await callback.bot.send_audio(chat_id=STORAGE_CHANNEL_ID, audio=f["file_id"])
+            uploaded_audios.append({
+                "file_id": f["file_id"],
+                "file_type": f["file_type"],
+                "duration": f.get("duration", 0),
+                "message_id": sent_audio.message_id
+            })
+        except Exception:
+            pass
+            
+    if book_id in database.books:
+        database.books[book_id]["audio_files"] = uploaded_audios
+        database.books[book_id]["duration"] = sum(f.get("duration", 0) for f in uploaded_audios)
+        
+        # Log to storage channel
+        b = database.books[book_id]
+        log_text = f"#BOOK\nID: {book_id}\nTITLE: {b['title']}\nSTATUS: updated_audio"
+        try:
+            await callback.bot.send_message(chat_id=STORAGE_CHANNEL_ID, text=log_text)
+        except Exception:
+            pass
+            
+        await database.save_index(callback.bot)
+        
+    await status_msg.delete()
+    await callback.message.answer("✅ Kitob audiolari muvaffaqiyatli tahrirlandi.", reply_markup=keyboards.get_admin_menu())
+    await callback.answer()
+
+@router.message(AdminEditBookState.pdf)
+async def process_edit_pdf_upload(message: Message, state: FSMContext):
+    if not message.document:
+        await message.answer("Iltimos, hujjat formatida PDF yuboring.")
+        return
+        
+    data = await state.get_data()
+    book_id = data["book_id"]
+    await state.clear()
+    
+    pdf_id = message.document.file_id
+    
+    # Upload to channel
+    try:
+        await message.bot.send_document(chat_id=STORAGE_CHANNEL_ID, document=pdf_id)
+    except Exception:
+        pass
+        
+    if book_id in database.books:
+        database.books[book_id]["pdf_file_id"] = pdf_id
+        
+        b = database.books[book_id]
+        log_text = f"#BOOK\nID: {book_id}\nTITLE: {b['title']}\nSTATUS: updated_pdf"
+        try:
+            await message.bot.send_message(chat_id=STORAGE_CHANNEL_ID, text=log_text)
+        except Exception:
+            pass
+            
+        await database.save_index(message.bot)
+        
+    await message.answer("✅ Kitob PDF varianti muvaffaqiyatli tahrirlandi.", reply_markup=keyboards.get_admin_menu())
 
 @router.message(AdminEditBookState.value)
 async def process_edited_value(message: Message, state: FSMContext):
@@ -710,16 +1085,7 @@ async def process_edited_value(message: Message, state: FSMContext):
             "#BOOK\n"
             f"ID: {book_id}\n"
             f"TITLE: {b['title']}\n"
-            f"AUTHOR: {b['author']}\n"
-            f"DESCRIPTION: {b['description']}\n"
-            f"CATEGORY: {b['category']}\n"
-            f"KEYWORDS: {kws_str}\n"
-            f"AUDIO_FILE_ID: {b['audio_file_id']}\n"
-            f"AUDIO_MESSAGE_ID: {b['audio_message_id']}\n"
-            f"PDF_FILE_ID: {b['pdf_file_id'] or 'yoq'}\n"
-            f"COVER_FILE_ID: {b['cover_file_id'] or 'yoq'}\n"
-            f"SOURCE: {b.get('source', 'admin')}\n"
-            f"STATUS: approved"
+            f"STATUS: updated_field"
         )
         try:
             await message.bot.send_message(chat_id=STORAGE_CHANNEL_ID, text=log_text)
@@ -766,6 +1132,33 @@ async def process_del_book(callback: CallbackQuery):
         await callback.message.edit_text("✅ Kitob o'chirildi.")
     await callback.answer()
 
+# ----------------- GLOBAL SORTING SETTING -----------------
+@router.callback_query(F.data == "admin_config_sorting")
+async def start_config_sorting(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminSortingState.select)
+    current = database.settings.get("books_sorting", "upload_time")
+    kb = keyboards.get_admin_sorting_keyboard(current)
+    await callback.message.edit_text(
+        "⚙️ *Global kitoblarni tartiblash sozlamalari:*\n\n"
+        "Foydalanuvchilar kitoblar ro'yxatini ko'rishganda kitoblar qaysi tartib bo'yicha chiqishini tanlang:",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+@router.callback_query(AdminSortingState.select, F.data.startswith("set_sort:"))
+async def process_set_sorting(callback: CallbackQuery, state: FSMContext):
+    val = callback.data.split(":")[1]
+    database.settings["books_sorting"] = val
+    await database.save_index(callback.bot)
+    
+    # Redraw
+    kb = keyboards.get_admin_sorting_keyboard(val)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
+    await callback.answer("Global tartiblash sozlamasi yangilandi.", show_alert=True)
+
 # ----------------- ADMIN RECOMMENDATION ACCEPT/REJECT -----------------
 @router.callback_query(F.data == "admin_view_recs_pending")
 async def view_pending_recommendations(callback: CallbackQuery):
@@ -775,13 +1168,19 @@ async def view_pending_recommendations(callback: CallbackQuery):
         return
         
     for r in pend_recs[:5]:
-        cat_name = database.categories.get(r["category"], {}).get("name", "Noma'lum")
+        cat_names = []
+        for c_id in r.get("categories", []):
+            cat_info = database.categories.get(c_id)
+            if cat_info:
+                cat_names.append(cat_info["name"])
+        cat_str = ", ".join(cat_names)
+        
         desc_val = r.get('description') or "yo'q"
         admin_text = (
             "💡 *Kutilayotgan kitob tavsiyasi:*\n\n"
             f"• *Nomi*: {r['title']}\n"
             f"• *Muallif*: {r['author']}\n"
-            f"• *Janr*: {cat_name}\n"
+            f"• *Janrlar*: {cat_str}\n"
             f"• *Tavsif*: {desc_val}\n"
             f"• *Kimdan*: ID `{r['user_id']}`\n"
         )
@@ -808,19 +1207,25 @@ async def approve_recommendation(callback: CallbackQuery):
         
     book_id = str(uuid.uuid4())[:8]
     
-    audio_file_id = rec.get("audio_file_id", "")
-    audio_file_type = rec.get("audio_file_type", "audio")
+    # Re-upload recommendation audio files to the storage channel
+    audio_files = rec.get("audio_files", [])
+    uploaded_audios = []
     
-    audio_msg_id = None
-    if audio_file_id:
+    for idx, f in enumerate(audio_files, 1):
         try:
-            if audio_file_type == "document":
-                sent_audio = await callback.bot.send_document(chat_id=STORAGE_CHANNEL_ID, document=audio_file_id)
+            if f.get("file_type") == "document":
+                sent_audio = await callback.bot.send_document(chat_id=STORAGE_CHANNEL_ID, document=f["file_id"])
             else:
-                sent_audio = await callback.bot.send_audio(chat_id=STORAGE_CHANNEL_ID, audio=audio_file_id)
-            audio_msg_id = sent_audio.message_id
+                sent_audio = await callback.bot.send_audio(chat_id=STORAGE_CHANNEL_ID, audio=f["file_id"])
+            
+            uploaded_audios.append({
+                "file_id": f["file_id"],
+                "file_type": f.get("file_type", "audio"),
+                "duration": f.get("duration", 0),
+                "message_id": sent_audio.message_id
+            })
         except Exception as e:
-            logger.error(f"Error uploading recommendation audio: {e}")
+            logger.error(f"Error forwarding recommendation audio part {idx}: {e}")
             
     cover_file_id = rec.get("cover_file_id", "")
     if cover_file_id:
@@ -841,14 +1246,13 @@ async def approve_recommendation(callback: CallbackQuery):
         "title": rec["title"],
         "author": rec["author"],
         "description": rec["description"].replace("\n", "\\n") if rec["description"] else "",
-        "category": rec["category"],
+        "categories": rec.get("categories", []),
         "keywords": [],
         "ratings": {},
-        "audio_file_id": audio_file_id,
-        "audio_file_type": audio_file_type,
-        "audio_message_id": audio_msg_id,
+        "audio_files": uploaded_audios,
         "pdf_file_id": pdf_file_id,
         "cover_file_id": cover_file_id,
+        "duration": sum(f.get("duration", 0) for f in uploaded_audios),
         "source": f"recommendation:{rec['user_id']}",
         "status": "approved",
         "created_at": datetime.now().isoformat()
@@ -856,7 +1260,6 @@ async def approve_recommendation(callback: CallbackQuery):
     
     database.books[book_id] = book_entry
     
-    audio_msg_val = audio_msg_id if audio_msg_id else "noma'lum"
     pdf_val = pdf_file_id if pdf_file_id else "yoq"
     cover_val = cover_file_id if cover_file_id else "yoq"
     log_text = (
@@ -865,10 +1268,10 @@ async def approve_recommendation(callback: CallbackQuery):
         f"TITLE: {rec['title']}\n"
         f"AUTHOR: {rec['author']}\n"
         f"DESCRIPTION: {book_entry['description']}\n"
-        f"CATEGORY: {rec['category']}\n"
+        f"CATEGORY: {rec['categories'][0] if rec['categories'] else 'yoq'}\n"
         f"KEYWORDS: yoq\n"
-        f"AUDIO_FILE_ID: {audio_file_id}\n"
-        f"AUDIO_MESSAGE_ID: {audio_msg_val}\n"
+        f"AUDIO_FILE_ID: {uploaded_audios[0]['file_id'] if uploaded_audios else 'yoq'}\n"
+        f"AUDIO_MESSAGE_ID: {uploaded_audios[0]['message_id'] if uploaded_audios else 'yoq'}\n"
         f"PDF_FILE_ID: {pdf_val}\n"
         f"COVER_FILE_ID: {cover_val}\n"
         f"SOURCE: recommendation\n"

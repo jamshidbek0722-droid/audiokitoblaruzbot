@@ -1,5 +1,7 @@
 import uuid
 import logging
+import random
+import urllib.parse
 from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
@@ -14,7 +16,34 @@ import keyboards
 logger = logging.getLogger(__name__)
 router = Router()
 
-# Global cancel handler for User FSM
+def sort_books(books_list):
+    sorting = database.settings.get("books_sorting", "upload_time")
+    if sorting == "random":
+        shuffled = list(books_list)
+        random.shuffle(shuffled)
+        return shuffled
+    elif sorting == "rating":
+        def get_avg_rating(b):
+            ratings = b.get("ratings", {})
+            if not ratings:
+                return 0.0
+            return sum(ratings.values()) / len(ratings)
+        return sorted(books_list, key=get_avg_rating, reverse=True)
+    elif sorting == "title":
+        return sorted(books_list, key=lambda x: x.get("title", "").lower())
+    elif sorting == "author":
+        return sorted(books_list, key=lambda x: x.get("author", "").lower())
+    else: # upload_time
+        return sorted(books_list, key=lambda x: x.get("created_at", ""), reverse=True)
+
+def format_duration(seconds: int) -> str:
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    if hours > 0:
+        return f"{hours} soat, {minutes} daqiqa"
+    return f"{minutes} daqiqa"
+
+# Global cancel handlers
 @router.message(StateFilter("*"), F.text == "❌ Bekor qilish")
 @router.message(StateFilter("*"), Command("cancel"))
 async def cancel_user_fsm(message: Message, state: FSMContext):
@@ -24,6 +53,20 @@ async def cancel_user_fsm(message: Message, state: FSMContext):
         "Amaliyot bekor qilindi.",
         reply_markup=keyboards.get_main_menu(database.is_admin(user_id))
     )
+
+@router.callback_query(StateFilter("*"), F.data == "cancel_fsm")
+async def cancel_fsm_callback(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    user_id = callback.from_user.id
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.message.answer(
+        "Amaliyot bekor qilindi.",
+        reply_markup=keyboards.get_main_menu(database.is_admin(user_id))
+    )
+    await callback.answer()
 
 # ----------------- COMMAND SHORTCUTS -----------------
 @router.message(Command("books"))
@@ -45,7 +88,7 @@ async def contact_cmd_shortcut(message: Message, state: FSMContext):
 @router.message(Command("rate"))
 async def rate_cmd_shortcut(message: Message):
     await message.answer(
-        "⭐ Kitobni baholash uchun avval '📚 Kitoblar' bo'limidan kitobni tanlang va audio tinglash ostidagi reyting tugmalaridan foydalaning, yoki kitobni qidiruv orqali toping."
+        "⭐ Kitobni baholash uchun kitobning audiosini tinglab bo'lgach, tagidagi 'Baholash' tugmasidan foydalaning."
     )
 
 @router.message(Command("share"))
@@ -59,6 +102,140 @@ async def share_cmd_shortcut(message: Message):
     )
     await message.answer(share_text)
 
+# ----------------- KUTUBXONAM -----------------
+@router.message(F.text == "📚 Kutubxonam")
+async def view_library_menu(message: Message):
+    user_id = message.from_user.id
+    user_data = database.users.get(user_id, {})
+    
+    favs_count = len(user_data.get("favorites", []))
+    stats = user_data.get("listening_stats", {"total_seconds": 0, "completed_books": []})
+    completed_count = len(stats.get("completed_books", []))
+    total_hours_str = format_duration(stats.get("total_seconds", 0))
+    
+    lib_text = (
+        "📚 *Sizning Shaxsiy Kutubxonangiz:*\n\n"
+        f"• *Kutubxonadagi kitoblar*: {favs_count} ta\n"
+        f"• *Eshitib tugatilgan kitoblar*: {completed_count} ta\n"
+        f"• *Jami eshitilgan vaqt*: {total_hours_str}\n\n"
+        "Quyidagi bo'limlardan birini tanlang:"
+    )
+    await message.answer(lib_text, reply_markup=keyboards.get_library_keyboard())
+
+@router.callback_query(F.data == "lib_my_books")
+async def view_lib_books(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    user_data = database.users.get(user_id, {})
+    fav_ids = user_data.get("favorites", [])
+    
+    fav_books = []
+    for bid in fav_ids:
+        b = database.books.get(bid)
+        if b and b.get("status", "approved") == "approved":
+            fav_books.append(b)
+            
+    if not fav_books:
+        await callback.answer("Kutubxonangiz hozircha bo'sh.", show_alert=True)
+        return
+        
+    builder = keyboards.InlineKeyboardBuilder()
+    for b in fav_books:
+        builder.row(keyboards.InlineKeyboardButton(text=f"📖 {b['title']}", callback_data=f"view_book:{b['id']}"))
+    builder.row(keyboards.InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_to_lib"))
+    
+    await callback.message.edit_text("📚 *Kutubxonangizdagi kitoblar:*", reply_markup=builder.as_markup())
+    await callback.answer()
+
+@router.callback_query(F.data == "lib_history")
+async def view_lib_history(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    user_data = database.users.get(user_id, {})
+    hist_ids = user_data.get("history", [])
+    
+    hist_books = []
+    for bid in hist_ids:
+        b = database.books.get(bid)
+        if b and b.get("status", "approved") == "approved":
+            hist_books.append(b)
+            
+    if not hist_books:
+        await callback.answer("Tarix hozircha bo'sh.", show_alert=True)
+        return
+        
+    builder = keyboards.InlineKeyboardBuilder()
+    for b in hist_books:
+        builder.row(keyboards.InlineKeyboardButton(text=f"🕒 {b['title']}", callback_data=f"view_book:{b['id']}"))
+    builder.row(keyboards.InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_to_lib"))
+    
+    await callback.message.edit_text("🕒 *Oxirgi eshitilgan kitoblar:*", reply_markup=builder.as_markup())
+    await callback.answer()
+
+@router.callback_query(F.data == "lib_stats")
+async def view_lib_stats(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    user_data = database.users.get(user_id, {})
+    stats = user_data.get("listening_stats", {"total_seconds": 0, "completed_books": []})
+    
+    total_hours_str = format_duration(stats.get("total_seconds", 0))
+    completed_count = len(stats.get("completed_books", []))
+    
+    profile = user_data.get("profile")
+    profile_status = "To'ldirilgan ✅" if profile else "To'ldirilmagan ❌"
+    
+    stats_text = (
+        "📊 *Sizning eshitish statistikangiz:*\n\n"
+        f"• *Jami eshitilgan vaqt*: {total_hours_str}\n"
+        f"• *Tugatilgan kitoblar soni*: {completed_count} ta\n"
+        f"• *Profil holati*: {profile_status}\n\n"
+        "Profil to'ldirish uchun shaxsiy profil bo'limiga o'ting."
+    )
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(keyboards.InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_to_lib"))
+    
+    await callback.message.edit_text(stats_text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_lib")
+async def back_to_library_menu(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    user_data = database.users.get(user_id, {})
+    
+    favs_count = len(user_data.get("favorites", []))
+    stats = user_data.get("listening_stats", {"total_seconds": 0, "completed_books": []})
+    completed_count = len(stats.get("completed_books", []))
+    total_hours_str = format_duration(stats.get("total_seconds", 0))
+    
+    lib_text = (
+        "📚 *Sizning Shaxsiy Kutubxonangiz:*\n\n"
+        f"• *Kutubxonadagi kitoblar*: {favs_count} ta\n"
+        f"• *Eshitib tugatilgan kitoblar*: {completed_count} ta\n"
+        f"• *Jami eshitilgan vaqt*: {total_hours_str}\n\n"
+        "Quyidagi bo'limlardan birini tanlang:"
+    )
+    await callback.message.edit_text(lib_text, reply_markup=keyboards.get_library_keyboard())
+    await callback.answer()
+
+@router.message(F.text == "🕒 Tarix")
+async def view_history_cmd(message: Message):
+    user_id = message.from_user.id
+    user_data = database.users.get(user_id, {})
+    hist_ids = user_data.get("history", [])
+    
+    hist_books = []
+    for bid in hist_ids:
+        b = database.books.get(bid)
+        if b and b.get("status", "approved") == "approved":
+            hist_books.append(b)
+            
+    if not hist_books:
+        await message.answer("Siz hali biron bir kitob tinglamadingiz.")
+        return
+        
+    builder = keyboards.InlineKeyboardBuilder()
+    for b in hist_books:
+        builder.row(keyboards.InlineKeyboardButton(text=f"🕒 {b['title']} - {b['author']}", callback_data=f"view_book:{b['id']}"))
+    await message.answer("🕒 *Oxirgi eshitilgan kitoblar:*", reply_markup=builder.as_markup())
+
 # ----------------- PROFIL -----------------
 @router.message(F.text == "👤 Profil")
 async def view_profile(message: Message):
@@ -69,7 +246,9 @@ async def view_profile(message: Message):
         return
         
     favs_count = len(user_data.get("favorites", []))
-    history_count = len(user_data.get("history", []))
+    stats = user_data.get("listening_stats", {"total_seconds": 0, "completed_books": []})
+    completed_count = len(stats.get("completed_books", []))
+    total_hours_str = format_duration(stats.get("total_seconds", 0))
     joined_date = user_data.get("joined_at", "Noma'lum")
     if joined_date != "Noma'lum":
         try:
@@ -99,8 +278,8 @@ async def view_profile(message: Message):
         f"• *Ism*: {full_name}\n"
         f"• *Telegram ID*: `{user_id}`\n"
         f"• *Username*: @{username}\n"
-        f"• *Sevimlilar*: {favs_count} ta kitob\n"
-        f"• *Tarix (tinglangan)*: {history_count} ta kitob\n"
+        f"• *Kutubxonadagi kitoblar*: {favs_count} ta\n"
+        f"• *Jami eshitilgan vaqt*: {total_hours_str}\n"
         f"• *Ro'yxatdan o'tilgan*: {joined_date}\n"
         f"{profile_details}"
     )
@@ -183,7 +362,6 @@ async def process_profile_interests(message: Message, state: FSMContext):
     
     user_id = message.from_user.id
     
-    # Save profile to user
     if user_id in database.users:
         database.users[user_id]["profile"] = {
             "gender": data["gender"],
@@ -198,50 +376,6 @@ async def process_profile_interests(message: Message, state: FSMContext):
         reply_markup=keyboards.get_main_menu(database.is_admin(user_id))
     )
 
-# ----------------- SEVIMLILAR -----------------
-@router.message(F.text == "⭐ Sevimlilar")
-async def view_favorites(message: Message):
-    user_id = message.from_user.id
-    user_data = database.users.get(user_id, {})
-    fav_ids = user_data.get("favorites", [])
-    
-    fav_books = []
-    for bid in fav_ids:
-        b = database.books.get(bid)
-        if b and b.get("status", "approved") == "approved":
-            fav_books.append(b)
-            
-    if not fav_books:
-        await message.answer("Sevimli kitoblaringiz ro'yxati hozircha bo'sh. Kitoblar tafsilotidan 'Sevimli qo'shish' tugmasini bosing.")
-        return
-        
-    builder = keyboards.InlineKeyboardBuilder()
-    for b in fav_books:
-        builder.row(keyboards.InlineKeyboardButton(text=f"⭐ {b['title']} - {b['author']}", callback_data=f"view_book:{b['id']}"))
-    await message.answer("⭐ *Sevimli kitoblaringiz:*", reply_markup=builder.as_markup())
-
-# ----------------- TARIX -----------------
-@router.message(F.text == "🕒 Tarix")
-async def view_history(message: Message):
-    user_id = message.from_user.id
-    user_data = database.users.get(user_id, {})
-    hist_ids = user_data.get("history", [])
-    
-    hist_books = []
-    for bid in hist_ids:
-        b = database.books.get(bid)
-        if b and b.get("status", "approved") == "approved":
-            hist_books.append(b)
-            
-    if not hist_books:
-        await message.answer("Siz hali biron bir kitob tinglamadingiz. Kitob tinglaganingizdan so'ng bu yerda paydo bo'ladi.")
-        return
-        
-    builder = keyboards.InlineKeyboardBuilder()
-    for b in hist_books:
-        builder.row(keyboards.InlineKeyboardButton(text=f"🕒 {b['title']} - {b['author']}", callback_data=f"view_book:{b['id']}"))
-    await message.answer("🕒 *Oxirgi tinglagan kitoblaringiz:*", reply_markup=builder.as_markup())
-
 # ----------------- KITOBLLAR / CATEGORIES -----------------
 @router.message(F.text == "📚 Kitoblar")
 async def view_categories_menu(message: Message):
@@ -250,7 +384,9 @@ async def view_categories_menu(message: Message):
         await message.answer("Hozircha hech qanday janr mavjud emas.")
         return
         
-    kb = keyboards.get_categories_inline(active_cats, "user_view_cat")
+    cols = database.settings.get("categories_columns", 2)
+    order = database.settings.get("categories_order", [])
+    kb = keyboards.get_categories_layout_keyboard(database.categories, "user_view_cat", columns=cols, order=order)
     await message.answer("📚 *Janrlardan birini tanlang:*", reply_markup=kb)
 
 @router.callback_query(F.data.startswith("user_view_cat:"))
@@ -261,17 +397,19 @@ async def view_category_books(callback: CallbackQuery):
         await callback.answer("Janr topilmadi.", show_alert=True)
         return
         
-    cat_books = [b for b in database.books.values() if b.get("category") == cat_id and b.get("status", "approved") == "approved"]
+    cat_books = [b for b in database.books.values() if cat_id in b.get("categories", []) and b.get("status", "approved") == "approved"]
     
     if not cat_books:
         await callback.message.answer(f"📁 *{cat_info['name']}* janrida hozircha kitoblar mavjud emas.")
         await callback.answer()
         return
         
+    # Apply global sorting configuration
+    cat_books = sort_books(cat_books)
     await show_books_page(callback, cat_id, cat_books, 1)
 
 async def show_books_page(callback: CallbackQuery, cat_id: str, books_list: list, page: int):
-    PAGE_SIZE = 5
+    PAGE_SIZE = 10  # Upgraded page size from 5 to 10
     total = len(books_list)
     pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
     
@@ -311,13 +449,16 @@ async def handle_category_page(callback: CallbackQuery):
     parts = callback.data.split(":")
     cat_id = parts[1]
     page = int(parts[2])
-    cat_books = [b for b in database.books.values() if b.get("category") == cat_id and b.get("status", "approved") == "approved"]
+    cat_books = [b for b in database.books.values() if cat_id in b.get("categories", []) and b.get("status", "approved") == "approved"]
+    cat_books = sort_books(cat_books)
     await show_books_page(callback, cat_id, cat_books, page)
 
 @router.callback_query(F.data == "back_to_cats")
 async def back_to_categories_callback(callback: CallbackQuery):
     active_cats = {k: v for k, v in database.categories.items() if v.get("status", "active") == "active"}
-    kb = keyboards.get_categories_inline(active_cats, "user_view_cat")
+    cols = database.settings.get("categories_columns", 2)
+    order = database.settings.get("categories_order", [])
+    kb = keyboards.get_categories_layout_keyboard(active_cats, "user_view_cat", columns=cols, order=order)
     await callback.message.edit_text("📚 *Janrlardan birini tanlang:*", reply_markup=kb)
     await callback.answer()
 
@@ -325,7 +466,10 @@ async def back_to_categories_callback(callback: CallbackQuery):
 @router.message(F.text == "🔍 Qidiruv")
 async def start_search(message: Message, state: FSMContext):
     await state.set_state(UserState.search)
-    await message.answer("🔍 Qidirmoqchi bo'lgan kitobingiz nomi, muallifi yoki kalit so'zini kiriting:", reply_markup=keyboards.get_cancel_keyboard())
+    # Include an inline cancel button to FSM search
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm"))
+    await message.answer("🔍 Qidirmoqchi bo'lgan kitobingiz nomi, muallifi yoki kalit so'zini kiriting:", reply_markup=builder.as_markup())
 
 @router.message(UserState.search)
 async def process_search_query(message: Message, state: FSMContext):
@@ -387,7 +531,13 @@ async def view_book_details(callback: CallbackQuery):
     is_fav = book_id in user_data.get("favorites", [])
     has_pdf = bool(book.get("pdf_file_id"))
     
-    cat_name = database.categories.get(book["category"], {}).get("name", "Noma'lum")
+    cat_names = []
+    for c_id in book.get("categories", []):
+        cat_info = database.categories.get(c_id)
+        if cat_info:
+            cat_names.append(cat_info["name"])
+    cat_str = ", ".join(cat_names) if cat_names else "Noma'lum"
+    
     desc = book.get("description", "").replace("\\n", "\n")
     if not desc:
         desc = "Tavsif mavjud emas."
@@ -400,11 +550,15 @@ async def view_book_details(callback: CallbackQuery):
         
     rating_str = f"⭐ *Reyting*: {avg_rating}/5 ({ratings_count} ta ovoz)"
     
+    # Calculate duration
+    dur_str = format_duration(book.get("duration", 0))
+    dur_info = f"\n🕒 *Davomiyligi*: {dur_str}" if book.get("duration", 0) > 0 else ""
+    
     details_text = (
         f"📖 *{book['title']}*\n"
         f"✍️ *Muallif*: {book['author']}\n"
-        f"📁 *Janr*: {cat_name}\n"
-        f"{rating_str}\n\n"
+        f"📁 *Janr*: {cat_str}\n"
+        f"{rating_str}{dur_info}\n\n"
         f"📝 *Tavsif*:\n{desc}"
     )
     
@@ -424,58 +578,7 @@ async def view_book_details(callback: CallbackQuery):
             
     await callback.answer()
 
-# ----------------- BOOK RATING SYSTEM -----------------
-@router.callback_query(F.data.startswith("rate_b:"))
-async def process_book_rating(callback: CallbackQuery):
-    parts = callback.data.split(":")
-    book_id = parts[1]
-    score = int(parts[2])
-    user_id = callback.from_user.id
-    
-    book = database.books.get(book_id)
-    if not book:
-        await callback.answer("Kitob topilmadi.", show_alert=True)
-        return
-        
-    ratings = book.setdefault("ratings", {})
-    ratings[str(user_id)] = score
-    await database.save_index(callback.bot)
-    
-    await callback.answer(f"Siz ushbu kitobga {score} ball berdingiz! Rahmat.", show_alert=True)
-    
-    # Refresh details view
-    cat_name = database.categories.get(book["category"], {}).get("name", "Noma'lum")
-    desc = book.get("description", "").replace("\\n", "\n")
-    if not desc:
-        desc = "Tavsif mavjud emas."
-        
-    ratings_count = len(ratings)
-    avg_rating = f"{sum(ratings.values()) / ratings_count:.1f}"
-    rating_str = f"⭐ *Reyting*: {avg_rating}/5 ({ratings_count} ta ovoz)"
-    
-    details_text = (
-        f"📖 *{book['title']}*\n"
-        f"✍️ *Muallif*: {book['author']}\n"
-        f"📁 *Janr*: {cat_name}\n"
-        f"{rating_str}\n\n"
-        f"📝 *Tavsif*:\n{desc}"
-    )
-    
-    user_data = database.users.get(user_id, {})
-    is_fav = book_id in user_data.get("favorites", [])
-    has_pdf = bool(book.get("pdf_file_id"))
-    
-    kb = keyboards.get_book_details_keyboard(book_id, is_fav, has_pdf)
-    
-    try:
-        if book.get("cover_file_id"):
-            await callback.message.edit_caption(caption=details_text, reply_markup=kb)
-        else:
-            await callback.message.edit_text(text=details_text, reply_markup=kb)
-    except Exception:
-        pass
-
-# ----------------- TINGLASH & YUKLAB OLISH -----------------
+# ----------------- MULTI-AUDIO TINGLASH & YUKLAB OLISH -----------------
 @router.callback_query(F.data.startswith("play_book:"))
 async def play_book_audio(callback: CallbackQuery):
     book_id = callback.data.split(":")[1]
@@ -486,7 +589,7 @@ async def play_book_audio(callback: CallbackQuery):
         
     user_id = callback.from_user.id
     
-    # Update History without immediately saving index (will save on specific database operations)
+    # Update History without immediately saving index
     user_data = database.users.setdefault(user_id, {
         "id": user_id,
         "favorites": [],
@@ -500,30 +603,52 @@ async def play_book_audio(callback: CallbackQuery):
     history_list.insert(0, book_id)
     user_data["history"] = history_list[:10]
     
-    await callback.answer("Audio yuborilmoqda...")
+    await callback.answer("Audiodetallar yuklanmoqda...")
     
-    footer = database.settings.get("custom_footer", "")
-    caption = f"🎧 *Eshitilmoqda*: {book['title']}\n✍️ *Muallif*: {book['author']}"
-    if footer:
-        caption += f"\n\n{footer}"
+    audios = book.get("audio_files", [])
+    if not audios:
+        # Fallback if audio_files is missing but audio_file_id is there
+        old_id = book.get("audio_file_id")
+        if old_id:
+            audios = [{"file_id": old_id, "file_type": book.get("audio_file_type", "audio"), "duration": book.get("duration", 0)}]
+            book["audio_files"] = audios
+            
+    if not audios:
+        await callback.message.answer("⚠️ Ushbu kitobning audio fayli topilmadi.")
+        return
         
-    file_id = book.get("audio_file_id")
-    file_type = book.get("audio_file_type", "audio")
+    footer = database.settings.get("custom_footer", "")
+    bot_info = await callback.bot.get_me()
     
-    try:
-        if file_type == "document":
-            await callback.message.answer_document(document=file_id, caption=caption)
-        else:
-            await callback.message.answer_audio(audio=file_id, caption=caption)
-    except Exception as e:
-        logger.error(f"Error sending audio: {e}")
+    total_audios = len(audios)
+    
+    # Send all audios sequentially
+    for idx, audio in enumerate(audios, 1):
+        caption = f"🎧 *{book['title']}* - {idx}-qism\n✍️ *Muallif*: {book['author']}"
+        if footer:
+            caption += f"\n\n{footer}"
+            
+        file_id = audio["file_id"]
+        file_type = audio.get("file_type", "audio")
+        
+        # Attach play keyboard ONLY to the last audio file
+        kb = keyboards.get_audio_play_keyboard(book_id, bot_info.username) if idx == total_audios else None
+        
         try:
             if file_type == "document":
-                await callback.message.answer_audio(audio=file_id, caption=caption)
+                await callback.message.answer_document(document=file_id, caption=caption, reply_markup=kb)
             else:
-                await callback.message.answer_document(document=file_id, caption=caption)
-        except Exception:
-            await callback.message.answer("⚠️ Audio faylni yuborishda xatolik yuz berdi.")
+                await callback.message.answer_audio(audio=file_id, caption=caption, reply_markup=kb)
+        except Exception as e:
+            logger.error(f"Error sending audio: {e}")
+            try:
+                # Try fallback format
+                if file_type == "document":
+                    await callback.message.answer_audio(audio=file_id, caption=caption, reply_markup=kb)
+                else:
+                    await callback.message.answer_document(document=file_id, caption=caption, reply_markup=kb)
+            except Exception:
+                await callback.message.answer(f"⚠️ {idx}-qism audio faylini yuborib bo'lmadi.")
 
 @router.callback_query(F.data.startswith("download_audio:"))
 async def download_book_audio(callback: CallbackQuery):
@@ -534,20 +659,30 @@ async def download_book_audio(callback: CallbackQuery):
         return
         
     await callback.answer("Audio yuklab olish uchun yuborilmoqda...")
-    file_id = book.get("audio_file_id")
-    
-    footer = database.settings.get("custom_footer", "")
-    caption = f"📥 *Yuklab olindi*: {book['title']} - {book['author']}"
-    if footer:
-        caption += f"\n\n{footer}"
+    audios = book.get("audio_files", [])
+    if not audios:
+        old_id = book.get("audio_file_id")
+        if old_id:
+            audios = [{"file_id": old_id, "file_type": book.get("audio_file_type", "audio")}]
+            
+    if not audios:
+        await callback.message.answer("⚠️ Audio fayl topilmadi.")
+        return
         
-    try:
-        await callback.message.answer_document(document=file_id, caption=caption)
-    except Exception:
+    footer = database.settings.get("custom_footer", "")
+    for idx, audio in enumerate(audios, 1):
+        caption = f"📥 *Yuklab olindi*: {book['title']} - {idx}-qism"
+        if footer:
+            caption += f"\n\n{footer}"
+        file_id = audio["file_id"]
         try:
-            await callback.message.answer_audio(audio=file_id, caption=caption)
+            # Force download by sending as document
+            await callback.message.answer_document(document=file_id, caption=caption)
         except Exception:
-            await callback.message.answer("⚠️ Faylni yuborishda xatolik yuz berdi.")
+            try:
+                await callback.message.answer_audio(audio=file_id, caption=caption)
+            except Exception:
+                await callback.message.answer(f"⚠️ {idx}-qism faylini yuborib bo'lmadi.")
 
 @router.callback_query(F.data.startswith("download_pdf:"))
 async def download_book_pdf(callback: CallbackQuery):
@@ -569,7 +704,7 @@ async def download_book_pdf(callback: CallbackQuery):
     except Exception:
         await callback.message.answer("⚠️ PDF faylini yuborishda xatolik yuz berdi.")
 
-# ----------------- FAVORITES TOGGLE -----------------
+# ----------------- FAVORITES (KUTUBXONAM) TOGGLE -----------------
 @router.callback_query(F.data.startswith("toggle_fav:"))
 async def toggle_favorite(callback: CallbackQuery):
     book_id = callback.data.split(":")[1]
@@ -585,10 +720,10 @@ async def toggle_favorite(callback: CallbackQuery):
     favs = user_data.setdefault("favorites", [])
     if book_id in favs:
         favs.remove(book_id)
-        await callback.answer("Kitob sevimlilardan o'chirildi.", show_alert=False)
+        await callback.answer("Kitob kutubxonangizdan o'chirildi.", show_alert=False)
     else:
         favs.append(book_id)
-        await callback.answer("Kitob sevimlilarga qo'shildi.", show_alert=False)
+        await callback.answer("Kitob kutubxonangizga qo'shildi.", show_alert=False)
         
     user_data["favorites"] = favs
     await database.save_index(callback.bot)
@@ -602,13 +737,120 @@ async def toggle_favorite(callback: CallbackQuery):
     except Exception:
         pass
 
+# ----------------- LISTENING VERIFICATION & RATINGS -----------------
+@router.callback_query(F.data.startswith("finish_book:"))
+async def finish_book_listening(callback: CallbackQuery):
+    book_id = callback.data.split(":")[1]
+    book = database.books.get(book_id)
+    if not book:
+        await callback.answer("Kitob topilmadi.", show_alert=True)
+        return
+        
+    user_id = callback.from_user.id
+    user_data = database.users.setdefault(user_id, {
+        "id": user_id,
+        "favorites": [],
+        "history": [],
+        "listening_stats": {"total_seconds": 0, "completed_books": []},
+        "joined_at": datetime.now().isoformat()
+    })
+    
+    stats = user_data.setdefault("listening_stats", {"total_seconds": 0, "completed_books": []})
+    completed_books = stats.setdefault("completed_books", [])
+    
+    if book_id not in completed_books:
+        completed_books.append(book_id)
+        duration = book.get("duration", 0)
+        stats["total_seconds"] += duration
+        await database.save_index(callback.bot)
+        
+        dur_str = format_duration(duration)
+        await callback.message.answer(
+            f"🎉 *Ajoyib!* Siz *'{book['title']}'* kitobini eshitib tugatdingiz!\n"
+            f"Eshitilgan vaqt: *{dur_str}* kutubxonangiz statistikasiga qo'shildi.\n\n"
+            f"Iltimos, kitobni xolis baholang:",
+            reply_markup=keyboards.get_book_rating_keyboard(book_id)
+        )
+    else:
+        await callback.message.answer(
+            f"Siz ushbu kitobni avval ham tinglab tugatgansiz. Baholamoqchi bo'lsangiz bosing:",
+            reply_markup=keyboards.get_book_rating_keyboard(book_id)
+        )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("show_rating:"))
+async def show_rating_keyboard(callback: CallbackQuery):
+    book_id = callback.data.split(":")[1]
+    user_id = callback.from_user.id
+    
+    # Restrict rating to users who completed listening (except admins/owner)
+    stats = database.users.get(user_id, {}).get("listening_stats", {})
+    completed_books = stats.get("completed_books", [])
+    
+    if book_id not in completed_books and not database.is_admin(user_id):
+        await callback.answer(
+            "⚠️ Boshqalarga xolis baho berish uchun avval ushbu kitobni eshitib tugatishingiz kerak!\n"
+            "Kitobni to'liq eshitgach, '✅ Eshitib tugatdim' tugmasini bosing.",
+            show_alert=True
+        )
+        return
+        
+    await callback.message.answer(
+        "⭐ Kitob uchun o'z bahoingizni tanlang:",
+        reply_markup=keyboards.get_book_rating_keyboard(book_id)
+    )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("rate_b:"))
+async def process_book_rating(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    book_id = parts[1]
+    score = int(parts[2])
+    user_id = callback.from_user.id
+    
+    # Double check restriction
+    stats = database.users.get(user_id, {}).get("listening_stats", {})
+    completed_books = stats.get("completed_books", [])
+    
+    if book_id not in completed_books and not database.is_admin(user_id):
+        await callback.answer(
+            "⚠️ Boshqalarga xolis baho berish uchun avval ushbu kitobni eshitib tugatishingiz kerak!",
+            show_alert=True
+        )
+        return
+        
+    book = database.books.get(book_id)
+    if not book:
+        await callback.answer("Kitob topilmadi.", show_alert=True)
+        return
+        
+    ratings = book.setdefault("ratings", {})
+    ratings[str(user_id)] = score
+    await database.save_index(callback.bot)
+    
+    await callback.answer(f"Siz ushbu kitobga {score} ball berdingiz! Rahmat.", show_alert=True)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+@router.callback_query(F.data == "close_rating")
+async def close_rating(callback: CallbackQuery):
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.answer()
+
 # ----------------- USER CONTACT ADMIN -----------------
 @router.callback_query(F.data == "user_contact_admin")
 async def start_contact_admin(callback: CallbackQuery, state: FSMContext):
     await state.set_state(UserContactForm.message)
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm"))
     await callback.message.answer(
         "✍️ Adminlarga yubormoqchi bo'lgan xabaringiz yoki taklifingizni yozib yuboring:",
-        reply_markup=keyboards.get_cancel_keyboard()
+        reply_markup=builder.as_markup()
     )
     await callback.answer()
 
@@ -650,20 +892,24 @@ async def process_contact_message(message: Message, state: FSMContext):
         reply_markup=keyboards.get_main_menu(database.is_admin(user_id))
     )
 
-# ----------------- BOOK RECOMMENDATION SYSTEM -----------------
+# ----------------- BOOK RECOMMENDATION SYSTEM (WITH MULTI-GENRES & AUDIOS) -----------------
 @router.message(F.text == "💡 Kitob Tavsiya Qilish")
 async def start_recommendation(message: Message, state: FSMContext):
     await state.set_state(UserRecForm.title)
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm"))
     await message.answer(
         "💡 *Kitob tavsiya qilish bo'limi:*\n\nKitob nomini kiriting:",
-        reply_markup=keyboards.get_cancel_keyboard()
+        reply_markup=builder.as_markup()
     )
 
 @router.message(UserRecForm.title)
 async def process_rec_title(message: Message, state: FSMContext):
     await state.update_data(title=message.text.strip())
     await state.set_state(UserRecForm.author)
-    await message.answer("Muallif ismini kiriting:", reply_markup=keyboards.get_cancel_keyboard())
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm"))
+    await message.answer("Muallif ismini kiriting:", reply_markup=builder.as_markup())
 
 @router.message(UserRecForm.author)
 async def process_rec_author(message: Message, state: FSMContext):
@@ -692,85 +938,193 @@ async def process_rec_description(message: Message, state: FSMContext):
         )
         return
         
+    await state.update_data(selected_categories=[])
     await state.set_state(UserRecForm.category)
-    kb = keyboards.get_categories_inline(active_cats, "rec_cat")
-    await message.answer("Kitob qaysi janrga tegishli? Quyidagilardan tanlang:", reply_markup=kb)
-    await message.answer("Tavsiyani bekor qilish uchun '❌ Bekor qilish' deb yozishingiz mumkin.")
+    
+    # Multi-category selector grid
+    kb = keyboards.get_multi_category_selector(database.categories, [], "user_rec_cat")
+    await message.answer("Kitob qaysi janrlarga tegishli? Kerakli janrlarni tanlab, 'Tasdiqlash' tugmasini bosing:", reply_markup=kb)
 
-@router.callback_query(F.data.startswith("rec_cat:"))
-async def process_rec_category(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(UserRecForm.category, F.data.startswith("user_rec_cat_toggle:"))
+async def process_rec_category_toggle(callback: CallbackQuery, state: FSMContext):
     cat_id = callback.data.split(":")[1]
-    await state.update_data(category=cat_id)
+    data = await state.get_data()
+    selected = data.get("selected_categories", [])
+    
+    if cat_id in selected:
+        selected.remove(cat_id)
+    else:
+        selected.append(cat_id)
+        
+    await state.update_data(selected_categories=selected)
+    
+    kb = keyboards.get_multi_category_selector(database.categories, selected, "user_rec_cat")
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
+    await callback.answer()
+
+@router.callback_query(UserRecForm.category, F.data == "user_rec_cat_confirm")
+async def process_rec_category_confirm(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    selected = data.get("selected_categories", [])
+    
+    if not selected:
+        await callback.answer("Kamida bitta janrni tanlash majburiy!", show_alert=True)
+        return
+        
     await state.set_state(UserRecForm.audio)
+    await state.update_data(audio_files=[])
     
     try:
         await callback.message.delete()
     except Exception:
         pass
         
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(
+        keyboards.InlineKeyboardButton(text="⏭️ Audio yo'q / Yakunlash", callback_data="user_rec_audio_done"),
+        keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm")
+    )
     await callback.message.answer(
-        "Kitobning audio faylini yuboring (ixtiyoriy, audio yoki hujjat formatida):",
-        reply_markup=keyboards.get_skip_cancel_keyboard()
+        "Kitobning audio fayllarini yuboring (ixtiyoriy, birma-bir bir nechta audio yuborishingiz mumkin):\n"
+        "Fayllarni yuborib bo'lgach, 'Yakunlash' tugmasini bosing.",
+        reply_markup=builder.as_markup()
     )
     await callback.answer()
 
 @router.message(UserRecForm.audio)
-async def process_rec_audio(message: Message, state: FSMContext):
-    if message.text == "⏭️ O'tkazib yuborish":
-        await state.update_data(audio_file_id="", audio_file_type="")
-    elif message.audio:
-        await state.update_data(audio_file_id=message.audio.file_id, audio_file_type="audio")
-    elif message.document:
-        await state.update_data(audio_file_id=message.document.file_id, audio_file_type="document")
-    else:
-        await message.answer("Iltimos, audio fayl yuboring yoki 'O'tkazib yuborish' tugmasini bosing.")
-        return
+async def process_rec_audio_upload(message: Message, state: FSMContext):
+    file_id = None
+    file_type = None
+    duration = 0
+    
+    if message.audio:
+        file_id = message.audio.file_id
+        file_type = "audio"
+        duration = message.audio.duration or 0
+    elif message.document and message.document.mime_type and message.document.mime_type.startswith("audio/"):
+        file_id = message.document.file_id
+        file_type = "document"
         
-    await state.set_state(UserRecForm.cover)
-    await message.answer(
-        "Kitob muqovasini yuboring (rasm, ixtiyoriy):",
-        reply_markup=keyboards.get_skip_cancel_keyboard()
-    )
-
-@router.message(UserRecForm.cover)
-async def process_rec_cover(message: Message, state: FSMContext):
-    if message.text == "⏭️ O'tkazib yuborish":
-        await state.update_data(cover_file_id="")
-    elif message.photo:
-        await state.update_data(cover_file_id=message.photo[-1].file_id)
-    else:
-        await message.answer("Iltimos, rasm yuboring yoki 'O'tkazib yuborish' tugmasini bosing.")
-        return
-        
-    await state.set_state(UserRecForm.pdf)
-    await message.answer(
-        "Kitobning PDF variantini yuboring (hujjat, ixtiyoriy):",
-        reply_markup=keyboards.get_skip_cancel_keyboard()
-    )
-
-@router.message(UserRecForm.pdf)
-async def process_rec_pdf(message: Message, state: FSMContext):
-    if message.text == "⏭️ O'tkazib yuborish":
-        await state.update_data(pdf_file_id="")
-    elif message.document:
-        await state.update_data(pdf_file_id=message.document.file_id)
-    else:
-        await message.answer("Iltimos, hujjat yuboring yoki 'O'tkazib yuborish' tugmasini bosing.")
+    if not file_id:
+        await message.answer("Iltimos, audio fayl yuboring yoki quyidagi 'Yakunlash' tugmasini bosing.")
         return
         
     data = await state.get_data()
-    cat_name = database.categories.get(data["category"], {}).get("name", "Noma'lum")
+    audio_files = data.get("audio_files", [])
+    audio_files.append({
+        "file_id": file_id,
+        "file_type": file_type,
+        "duration": duration
+    })
+    await state.update_data(audio_files=audio_files)
     
-    desc_val = data.get('description') or "yo'q"
-    audio_status = "bor" if data.get('audio_file_id') else "yo'q"
-    cover_status = "bor" if data.get('cover_file_id') else "yo'q"
-    pdf_status = "bor" if data.get('pdf_file_id') else "yo'q"
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(
+        keyboards.InlineKeyboardButton(text="✅ Yakunlash", callback_data="user_rec_audio_done"),
+        keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm")
+    )
+    await message.answer(
+        f"✅ {len(audio_files)}-audio qabul qilindi. Yana yuborishingiz yoki yakunlashingiz mumkin:",
+        reply_markup=builder.as_markup()
+    )
+
+@router.callback_query(UserRecForm.audio, F.data == "user_rec_audio_done")
+async def process_rec_audio_done(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(UserRecForm.cover)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(
+        keyboards.InlineKeyboardButton(text="⏭️ O'tkazib yuborish", callback_data="user_rec_cover_skip"),
+        keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm")
+    )
+    await callback.message.answer(
+        "Kitob muqovasini yuboring (rasm, ixtiyoriy):",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+@router.callback_query(UserRecForm.cover, F.data == "user_rec_cover_skip")
+async def process_rec_cover_skip(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(cover_file_id="")
+    await state.set_state(UserRecForm.pdf)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(
+        keyboards.InlineKeyboardButton(text="⏭️ O'tkazib yuborish", callback_data="user_rec_pdf_skip"),
+        keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm")
+    )
+    await callback.message.answer(
+        "Kitobning PDF variantini yuboring (hujjat, ixtiyoriy):",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+@router.message(UserRecForm.cover)
+async def process_rec_cover_upload(message: Message, state: FSMContext):
+    if not message.photo:
+        await message.answer("Iltimos, rasm yuboring yoki o'tkazib yuboring.")
+        return
+        
+    await state.update_data(cover_file_id=message.photo[-1].file_id)
+    await state.set_state(UserRecForm.pdf)
+    
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(
+        keyboards.InlineKeyboardButton(text="⏭️ O'tkazib yuborish", callback_data="user_rec_pdf_skip"),
+        keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm")
+    )
+    await message.answer(
+        "Kitobning PDF variantini yuboring (hujjat, ixtiyoriy):",
+        reply_markup=builder.as_markup()
+    )
+
+@router.callback_query(UserRecForm.pdf, F.data == "user_rec_pdf_skip")
+async def process_rec_pdf_skip(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(pdf_file_id="")
+    await show_rec_summary(callback.message, state)
+    await callback.answer()
+
+@router.message(UserRecForm.pdf)
+async def process_rec_pdf_upload(message: Message, state: FSMContext):
+    if not message.document:
+        await message.answer("Iltimos, hujjat formatida PDF yuboring yoki o'tkazib yuboring.")
+        return
+        
+    await state.update_data(pdf_file_id=message.document.file_id)
+    await show_rec_summary(message, state)
+
+async def show_rec_summary(message: Message, state: FSMContext):
+    data = await state.get_data()
+    
+    cat_names = []
+    for c_id in data["selected_categories"]:
+        cat_info = database.categories.get(c_id)
+        if cat_info:
+            cat_names.append(cat_info["name"])
+    cat_str = ", ".join(cat_names) if cat_names else "Noma'lum"
+    
+    desc_val = data.get("description") or "yo'q"
+    audio_files = data.get("audio_files", [])
+    audio_status = f"{len(audio_files)} ta audio" if audio_files else "yo'q"
+    cover_status = "bor" if data.get("cover_file_id") else "yo'q"
+    pdf_status = "bor" if data.get("pdf_file_id") else "yo'q"
     
     summary = (
         "📖 *Kitob tavsiyasi tayyor:*\n\n"
         f"• *Nomi*: {data['title']}\n"
         f"• *Muallif*: {data['author']}\n"
-        f"• *Janr*: {cat_name}\n"
+        f"• *Janrlar*: {cat_str}\n"
         f"• *Tavsif*: {desc_val}\n"
         f"• *Audio*: {audio_status}\n"
         f"• *Muqova*: {cover_status}\n"
@@ -780,6 +1134,7 @@ async def process_rec_pdf(message: Message, state: FSMContext):
     
     await state.set_state(UserRecForm.confirm)
     await message.answer(summary, reply_markup=keyboards.get_confirmation_keyboard())
+    # Keep reply cancelled layout
     await message.answer("Tugmalardan foydalaning.", reply_markup=keyboards.get_cancel_keyboard())
 
 @router.callback_query(UserRecForm.confirm, F.data.startswith("confirm_"))
@@ -804,6 +1159,7 @@ async def process_rec_confirmation(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     
     rec_id = str(uuid.uuid4())[:8]
+    audio_files = data.get("audio_files", [])
     
     rec_data = {
         "id": rec_id,
@@ -811,11 +1167,11 @@ async def process_rec_confirmation(callback: CallbackQuery, state: FSMContext):
         "title": data["title"],
         "author": data["author"],
         "description": data["description"],
-        "category": data["category"],
-        "audio_file_id": data["audio_file_id"],
-        "audio_file_type": data.get("audio_file_type", ""),
+        "categories": data["selected_categories"],
+        "audio_files": audio_files,
         "cover_file_id": data["cover_file_id"],
         "pdf_file_id": data["pdf_file_id"],
+        "duration": sum(f.get("duration", 0) for f in audio_files),
         "status": "pending",
         "created_at": datetime.now().isoformat()
     }
@@ -834,28 +1190,65 @@ async def process_rec_confirmation(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
     
-    cat_name = database.categories.get(data["category"], {}).get("name", "Noma'lum")
-    desc_val = data.get('description') or "yo'q"
+    # Notify admins with direct audio/pdf references so they can play/see them!
+    cat_names = []
+    for c_id in data["selected_categories"]:
+        cat_info = database.categories.get(c_id)
+        if cat_info:
+            cat_names.append(cat_info["name"])
+    cat_str = ", ".join(cat_names)
+    
+    desc_val = data.get("description") or "yo'q"
     user_name_val = callback.from_user.username or "username_yoq"
+    
     admin_text = (
         "💡 *Yangi kitob tavsiyasi keldi:*\n\n"
         f"• *Nomi*: {data['title']}\n"
         f"• *Muallif*: {data['author']}\n"
-        f"• *Janr*: {cat_name}\n"
+        f"• *Janrlar*: {cat_str}\n"
         f"• *Tavsif*: {desc_val}\n"
+        f"• *Fayllar*: {len(audio_files)} ta audio, PDF: {'bor' if data['pdf_file_id'] else 'yoq'}\n"
         f"• *Kimdan*: ID `{user_id}` (@{user_name_val})\n\n"
-        "Ma'qullaysizmi?"
+        "Tavsiyani ma'qullaysizmi?"
     )
     
     kb = keyboards.get_recommendation_decide_keyboard(rec_id)
+    
+    # Forward the audio and PDF files to admins first so they can actually review them!
+    async def send_previews(admin_id):
+        # 1. Send text details card
+        await callback.bot.send_message(chat_id=admin_id, text=admin_text, reply_markup=kb)
+        # 2. Send cover if present
+        if data.get("cover_file_id"):
+            try:
+                await callback.bot.send_photo(chat_id=admin_id, photo=data["cover_file_id"], caption=f"🖼️ *Tavsiya muqovasi*: {data['title']}")
+            except Exception:
+                pass
+        # 3. Send PDF if present
+        if data.get("pdf_file_id"):
+            try:
+                await callback.bot.send_document(chat_id=admin_id, document=data["pdf_file_id"], caption=f"📄 *Tavsiya PDF*: {data['title']}")
+            except Exception:
+                pass
+        # 4. Send Audios
+        for idx, f in enumerate(audio_files, 1):
+            try:
+                caption = f"🎧 *Tavsiya Audio* ({idx}/{len(audio_files)}): {data['title']}"
+                if f.get("file_type") == "document":
+                    await callback.bot.send_document(chat_id=admin_id, document=f["file_id"], caption=caption)
+                else:
+                    await callback.bot.send_audio(chat_id=admin_id, audio=f["file_id"], caption=caption)
+            except Exception:
+                pass
+                
     for admin_id in database.admins:
         try:
-            await callback.bot.send_message(chat_id=admin_id, text=admin_text, reply_markup=kb)
+            await send_previews(admin_id)
         except Exception as e:
             logger.warning(f"Could not notify admin {admin_id}: {e}")
             
     if OWNER_ID not in database.admins:
         try:
-            await callback.bot.send_message(chat_id=OWNER_ID, text=admin_text, reply_markup=kb)
+            await send_previews(OWNER_ID)
         except Exception as e:
             logger.warning(f"Could not notify owner: {e}")

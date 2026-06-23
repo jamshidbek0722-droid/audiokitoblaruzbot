@@ -2,3 +2,7 @@ aiogram>=3.0.0
 pydantic
 aiohttp
 python-dotenv
+motor
+pymongo
+dnspython
+
