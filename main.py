@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import sys
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -57,6 +58,14 @@ async def on_startup(bot: Bot):
     logger.info("Bot is ready and polling updates.")
 
 async def main():
+    # Verify environment configurations before bot initialization
+    if not config.BOT_TOKEN or config.OWNER_ID == 0 or config.STORAGE_CHANNEL_ID == 0 or not config.MONGO_URI:
+        logger.critical(
+            "FATAL CONFIG ERROR: BOT_TOKEN, OWNER_ID, STORAGE_CHANNEL_ID, and MONGO_URI "
+            "must be properly set in the environment variables before starting the bot!"
+        )
+        sys.exit(1)
+
     # Initialize Bot
     bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode="Markdown"))
     
