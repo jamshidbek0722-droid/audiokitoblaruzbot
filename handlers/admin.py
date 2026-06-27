@@ -15,7 +15,8 @@ import database
 import keyboards
 from states import (
     AdminState, AdminBookForm, AdminReplyForm, 
-    AdminEditBookState, AdminCategoryLayoutState, AdminSortingState
+    AdminEditBookState, AdminCategoryLayoutState, AdminSortingState,
+    AdminMenuSettingsState, AdminAISettingsState
 )
 
 logger = logging.getLogger(__name__)
