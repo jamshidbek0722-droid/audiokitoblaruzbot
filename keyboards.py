@@ -1,23 +1,47 @@
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 from aiogram.types import ReplyKeyboardMarkup, InlineKeyboardMarkup, KeyboardButton, InlineKeyboardButton
 import urllib.parse
+import database
 
 def get_main_menu(is_user_admin: bool = False) -> ReplyKeyboardMarkup:
+    # Read settings
+    ai_enabled = database.settings.get("ai_enabled", True)
+    
+    # Read database.menu_settings
+    menu_cfg = getattr(database, "menu_settings", {})
+    rows = menu_cfg.get("rows", [
+        ["📚 Kitoblar"],
+        ["📚 Kutubxonam", "🕒 Tarix"],
+        ["🧠 AI Tavsiya", "💬 AI Companion"],
+        ["💡 Kitob Tavsiya Qilish", "🔍 Qidiruv"],
+        ["👤 Profil", "ℹ️ Yordam"]
+    ])
+    labels = menu_cfg.get("labels", {})
+    
     builder = ReplyKeyboardBuilder()
-    # Row 1: Books (full width)
-    builder.row(KeyboardButton(text="📚 Kitoblar"))
-    # Row 2: Kutubxonam & History (side-by-side)
-    builder.row(KeyboardButton(text="📚 Kutubxonam"), KeyboardButton(text="🕒 Tarix"))
-    # Row 3: Recommendations & Search (side-by-side)
-    builder.row(KeyboardButton(text="💡 Kitob Tavsiya Qilish"), KeyboardButton(text="🔍 Qidiruv"))
-    # Row 4: Profile & Help (side-by-side)
-    builder.row(KeyboardButton(text="👤 Profil"), KeyboardButton(text="ℹ️ Yordam"))
     
+    # We will build rows one by one
+    row_sizes = []
+    for r in rows:
+        filtered_row = []
+        for btn_key in r:
+            # Check if this is an AI button and AI is disabled
+            if not ai_enabled and btn_key in ["🧠 AI Tavsiya", "💬 AI Companion"]:
+                continue
+            
+            # Get label (fallback to key)
+            label = labels.get(btn_key, btn_key)
+            filtered_row.append(KeyboardButton(text=label))
+            
+        if filtered_row:
+            builder.row(*filtered_row)
+            row_sizes.append(len(filtered_row))
+            
     if is_user_admin:
-        # Row 5: Admin Panel
         builder.row(KeyboardButton(text="⚙️ Admin Panel"))
-    
-    builder.adjust(1, 2, 2, 2, 1 if is_user_admin else 0)
+        row_sizes.append(1)
+        
+    builder.adjust(*row_sizes)
     return builder.as_markup(resize_keyboard=True)
 
 def get_cancel_keyboard() -> ReplyKeyboardMarkup:
@@ -37,6 +61,7 @@ def get_admin_menu() -> ReplyKeyboardMarkup:
     builder.row(KeyboardButton(text="📚 Kitoblarni boshqarish"), KeyboardButton(text="💡 Tavsiyalar"))
     builder.row(KeyboardButton(text="📢 Xabar yuborish"), KeyboardButton(text="👥 Adminlar"))
     builder.row(KeyboardButton(text="🔐 Majburiy obuna"), KeyboardButton(text="📝 Footer matnini sozlash"))
+    builder.row(KeyboardButton(text="🤖 AI Sozlamalari"), KeyboardButton(text="⚙️ Menyuni Sozlash"))
     builder.row(KeyboardButton(text="🏠 Asosiy menyu"))
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
@@ -130,7 +155,7 @@ def get_confirmation_keyboard() -> InlineKeyboardMarkup:
     )
     return builder.as_markup()
 
-def get_book_details_keyboard(book_id: str, is_fav: bool, has_pdf: bool) -> InlineKeyboardMarkup:
+def get_book_details_keyboard(book_id: str, is_fav: bool, has_pdf: bool, src: str = "") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="🎧 Tinglash", callback_data=f"play_book:{book_id}"),
@@ -140,8 +165,10 @@ def get_book_details_keyboard(book_id: str, is_fav: bool, has_pdf: bool) -> Inli
         builder.row(InlineKeyboardButton(text="📄 PDF Yuklash", callback_data=f"download_pdf:{book_id}"))
     
     fav_text = "📚 Kutubxonamdan o'chirish" if is_fav else "📚 Kutubxonamga qo'shish"
-    builder.row(InlineKeyboardButton(text=fav_text, callback_data=f"toggle_fav:{book_id}"))
-    builder.row(InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_to_books"))
+    builder.row(InlineKeyboardButton(text=fav_text, callback_data=f"toggle_fav:{book_id}:{src}"))
+    
+    back_data = f"back_to_books:{book_id}:{src}" if src else f"back_to_books:{book_id}"
+    builder.row(InlineKeyboardButton(text="🔙 Orqaga", callback_data=back_data))
     return builder.as_markup()
 
 def get_audio_play_keyboard(book_id: str, bot_username: str, rated: bool = False) -> InlineKeyboardMarkup:
@@ -282,4 +309,34 @@ def get_regions_keyboard() -> InlineKeyboardMarkup:
     for r in regions:
         builder.row(InlineKeyboardButton(text=r, callback_data=f"profile_region:{r}"))
     builder.adjust(2)
+    return builder.as_markup()
+
+def get_ai_settings_keyboard(enabled: bool, provider: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    status_text = "🟢 Yoqilgan (ON)" if enabled else "🔴 O'chirilgan (OFF)"
+    toggle_text = "🔴 O'chirish" if enabled else "🟢 Yoqish"
+    builder.row(InlineKeyboardButton(text=f"AI Holati: {status_text}", callback_data="none"))
+    builder.row(InlineKeyboardButton(text=toggle_text, callback_data="admin_toggle_ai"))
+    
+    prov_text = f"Provayder: {provider}"
+    toggle_prov_text = "🤖 DeepSeek ga o'tish" if provider == "GEMINI" else "🤖 Gemini ga o'tish"
+    builder.row(InlineKeyboardButton(text=prov_text, callback_data="none"))
+    builder.row(InlineKeyboardButton(text=toggle_prov_text, callback_data="admin_toggle_ai_provider"))
+    
+    builder.row(InlineKeyboardButton(text="📊 Statistikani tozalash", callback_data="admin_clear_ai_stats"))
+    builder.row(InlineKeyboardButton(text="🔙 Orqaga", callback_data="cancel_fsm"))
+    return builder.as_markup()
+
+def get_menu_settings_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="📝 Button Nomlarini Tahrirlash", callback_data="menu_edit_labels"))
+    builder.row(InlineKeyboardButton(text="🔢 Qatorlar (Rows) Tahrirlash", callback_data="menu_edit_rows"))
+    builder.row(InlineKeyboardButton(text="🔙 Orqaga", callback_data="cancel_fsm"))
+    return builder.as_markup()
+
+def get_quiz_keyboard(options: list, prefix: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for idx, opt in enumerate(options):
+        builder.row(InlineKeyboardButton(text=opt, callback_data=f"{prefix}:{idx}"))
+    builder.row(InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm"))
     return builder.as_markup()

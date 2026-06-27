@@ -19,4 +19,8 @@ OWNER_ID = int(OWNER_ID_RAW)
 STORAGE_CHANNEL_ID = int(STORAGE_CHANNEL_ID_RAW)
 REQUIRED_CHANNEL_IDS = []  # Can also be dynamically loaded/saved in index
 
+# AI API Keys
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+
 

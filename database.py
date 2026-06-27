@@ -18,9 +18,17 @@ settings = {
     "custom_footer": "",
     "categories_columns": 2,
     "books_sorting": "upload_time",
-    "categories_order": []
+    "categories_order": [],
+    "ai_enabled": True,
+    "ai_provider": "GEMINI",
+    "ai_analytics": {
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "total_cost": 0.0
+    }
 }
 required_channels = {}     # channel_id -> {id: int, title: str, url: str}
+menu_settings = {}         # Row-based layout configurations
 
 # MongoDB clients and collections
 db_client = None
@@ -33,6 +41,7 @@ recommendations_col = None
 settings_col = None
 required_channels_col = None
 admins_col = None
+menu_settings_col = None
 
 # Lock to avoid concurrent database writes
 save_lock = asyncio.Lock()
@@ -42,7 +51,7 @@ async def load_index(bot: Bot):
     Initializes connection to MongoDB Atlas, retrieves all collections,
     and populates the in-memory RAM caches.
     """
-    global db_client, db, users_col, books_col, categories_col, recommendations_col, settings_col, required_channels_col, admins_col
+    global db_client, db, users_col, books_col, categories_col, recommendations_col, settings_col, required_channels_col, admins_col, menu_settings_col
     
     try:
         logger.info("Initializing MongoDB connection using MONGO_URI...")
@@ -114,6 +123,17 @@ async def load_index(bot: Bot):
             settings_copy = settings_doc.copy()
             del settings_copy["_id"]
             settings.update(settings_copy)
+            # Ensure AI parameters exist
+            if "ai_enabled" not in settings:
+                settings["ai_enabled"] = True
+            if "ai_provider" not in settings:
+                settings["ai_provider"] = "GEMINI"
+            if "ai_analytics" not in settings:
+                settings["ai_analytics"] = {
+                    "total_input_tokens": 0,
+                    "total_output_tokens": 0,
+                    "total_cost": 0.0
+                }
         else:
             # Initialize with default settings
             settings.update({
@@ -121,7 +141,14 @@ async def load_index(bot: Bot):
                 "custom_footer": "",
                 "categories_columns": 2,
                 "books_sorting": "upload_time",
-                "categories_order": []
+                "categories_order": [],
+                "ai_enabled": True,
+                "ai_provider": "GEMINI",
+                "ai_analytics": {
+                    "total_input_tokens": 0,
+                    "total_output_tokens": 0,
+                    "total_cost": 0.0
+                }
             })
             await settings_col.update_one(
                 {"_id": "global"},
@@ -137,7 +164,45 @@ async def load_index(bot: Bot):
             del doc_copy["_id"]
             required_channels[channel_id] = doc_copy
             
-        logger.info(f"MongoDB data successfully synchronized. Cache contents: Admins: {len(admins)}, Users: {len(users)}, Books: {len(books)}, Categories: {len(categories)}, Channels: {len(required_channels)}")
+        # 8. Load Menu Settings
+        global menu_settings_col
+        menu_settings_col = db["menu_settings"]
+        menu_doc = await menu_settings_col.find_one({"_id": "main_menu"})
+        global menu_settings
+        menu_settings.clear()
+        if menu_doc:
+            menu_copy = menu_doc.copy()
+            del menu_copy["_id"]
+            menu_settings.update(menu_copy)
+        else:
+            # Default menu layout settings
+            menu_settings.update({
+                "rows": [
+                    ["📚 Kitoblar"],
+                    ["📚 Kutubxonam", "🕒 Tarix"],
+                    ["🧠 AI Tavsiya", "💬 AI Companion"],
+                    ["💡 Kitob Tavsiya Qilish", "🔍 Qidiruv"],
+                    ["👤 Profil", "ℹ️ Yordam"]
+                ],
+                "labels": {
+                    "📚 Kitoblar": "📚 Kitoblar",
+                    "📚 Kutubxonam": "📚 Kutubxonam",
+                    "🕒 Tarix": "🕒 Tarix",
+                    "🧠 AI Tavsiya": "🧠 AI Tavsiya",
+                    "💬 AI Companion": "💬 AI Companion",
+                    "💡 Kitob Tavsiya Qilish": "💡 Kitob Tavsiya Qilish",
+                    "🔍 Qidiruv": "🔍 Qidiruv",
+                    "👤 Profil": "👤 Profil",
+                    "ℹ️ Yordam": "ℹ️ Yordam"
+                }
+            })
+            await menu_settings_col.update_one(
+                {"_id": "main_menu"},
+                {"$set": menu_settings},
+                upsert=True
+            )
+            
+        logger.info(f"MongoDB data successfully synchronized. Cache contents: Admins: {len(admins)}, Users: {len(users)}, Books: {len(books)}, Categories: {len(categories)}, Channels: {len(required_channels)}, Menu Rows: {len(menu_settings.get('rows', []))}")
     except Exception as e:
         logger.critical(f"FATAL ERROR: Failed to load MongoDB data: {e}", exc_info=True)
         # Fallback to local default state
@@ -223,6 +288,17 @@ async def save_index(bot: Bot):
                 )
             await required_channels_col.delete_many({"_id": {"$nin": [int(k) for k in required_channels.keys()]}})
             
+            # 8. Sync Menu Settings
+            if menu_settings_col is not None and menu_settings:
+                menu_to_save = menu_settings.copy()
+                if "_id" in menu_to_save:
+                    del menu_to_save["_id"]
+                await menu_settings_col.update_one(
+                    {"_id": "main_menu"},
+                    {"$set": menu_to_save},
+                    upsert=True
+                )
+            
             logger.info("Successfully synchronized all modifications to MongoDB Atlas.")
         except Exception as e:
             logger.error(f"Error saving RAM caches to MongoDB Atlas: {e}", exc_info=True)
@@ -265,3 +341,13 @@ async def register_user(user_id: int, username: str, full_name: str, bot: Bot):
             )
         except Exception as e:
             logger.error(f"Failed to save user registration to MongoDB: {e}")
+
+def is_menu_button(button_key: str):
+    def filter_func(message) -> bool:
+        if not hasattr(message, "text") or not message.text:
+            return False
+        text = message.text.strip()
+        labels = menu_settings.get("labels", {})
+        label = labels.get(button_key, button_key)
+        return text == label
+    return filter_func

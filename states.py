@@ -54,6 +54,8 @@ class AdminEditBookState(StatesGroup):
     value = State()
     audio = State()
     pdf = State()
+    cover = State()
+    category = State()
 
 class AdminCategoryLayoutState(StatesGroup):
     select = State()
@@ -62,3 +64,24 @@ class AdminCategoryLayoutState(StatesGroup):
 
 class AdminSortingState(StatesGroup):
     select = State()
+
+# AI Switchboard State
+class AdminAISettingsState(StatesGroup):
+    dashboard = State()
+
+# Menu Settings State
+class AdminMenuSettingsState(StatesGroup):
+    select_action = State()
+    edit_row = State()
+    edit_label_select = State()
+    edit_label_value = State()
+
+# User AI Recommendation Quiz
+class UserAIRecommendationState(StatesGroup):
+    mood = State()
+    interest = State()
+    expectation = State()
+
+# User AI Companion Chat
+class UserAIChatState(StatesGroup):
+    chat = State()

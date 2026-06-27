@@ -91,7 +91,7 @@ async def start_cmd(message: Message):
     )
 
 @router.message(Command("help"))
-@router.message(F.text == "ℹ️ Yordam")
+@router.message(database.is_menu_button("ℹ️ Yordam"))
 async def help_cmd(message: Message):
     help_text = (
         "📚 *Botdan foydalanish bo'yicha yordam:*\n\n"

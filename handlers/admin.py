@@ -46,8 +46,8 @@ ADMIN_MENU_BUTTONS = [
     "👥 Adminlar",
     "🔐 Majburiy obuna",
     "📝 Footer matnini sozlash",
-    "🔄 Bazani yangilash",
-    "📥 Bazani eksport qilish"
+    "🤖 AI Sozlamalari",
+    "⚙️ Menyuni Sozlash"
 ]
 
 def is_admin_filter(message: Message) -> bool:
@@ -158,6 +158,46 @@ async def admin_check_message(message: Message, state: FSMContext):
             "Footerni butunlay o'chirish uchun 'o'chirish' deb yozing.",
             reply_markup=keyboards.get_cancel_keyboard()
         )
+        return
+        
+    elif text == "🤖 AI Sozlamalari":
+        enabled = database.settings.get("ai_enabled", True)
+        provider = database.settings.get("ai_provider", "GEMINI").upper()
+        analytics = database.settings.get("ai_analytics", {})
+        total_in = analytics.get("total_input_tokens", 0)
+        total_out = analytics.get("total_output_tokens", 0)
+        cost = analytics.get("total_cost", 0.0)
+        
+        dashboard_text = (
+            "🤖 *AI Tizimi Sozlamalari:*\n\n"
+            f"• *AI Holati (Kill-Switch)*: {'Yoqilgan (ON) 🟢' if enabled else 'O\'chirilgan (OFF) 🔴'}\n"
+            f"• *Provayder*: *{provider}*\n\n"
+            f"📊 *Tokenlar Sarfi Analytics:*\n"
+            f"• Kiruvchi (Input) tokenlar: {total_in:,} ta\n"
+            f"• Chiquvchi (Output) tokenlar: {total_out:,} ta\n"
+            f"• Taxminiy hisoblangan sarf: *${cost:.6f}*"
+        )
+        await message.answer(dashboard_text, reply_markup=keyboards.get_ai_settings_keyboard(enabled, provider))
+        return
+        
+    elif text == "⚙️ Menyuni Sozlash":
+        menu_cfg = getattr(database, "menu_settings", {})
+        rows = menu_cfg.get("rows", [])
+        
+        # Display current row layout
+        rows_str = []
+        for idx, r in enumerate(rows, 1):
+            row_items = ", ".join(r)
+            rows_str.append(f"Qator {idx}: `{row_items}`")
+        layout_preview = "\n".join(rows_str)
+        
+        text_menu = (
+            "⚙️ *Botning Asosiy Menyu Sozlamalari:*\n\n"
+            "Mavjud qatorlar joylashuvi:\n"
+            f"{layout_preview}\n\n"
+            "Nima qilmoqchisiz?"
+        )
+        await message.answer(text_menu, reply_markup=keyboards.get_menu_settings_keyboard())
         return
 
 
@@ -868,6 +908,10 @@ async def select_book_to_edit(callback: CallbackQuery, state: FSMContext):
         keyboards.InlineKeyboardButton(text="Kalit so'zlar", callback_data="edit_f:keywords")
     )
     builder.row(
+        keyboards.InlineKeyboardButton(text="Muqova (Cover)", callback_data="edit_f:cover"),
+        keyboards.InlineKeyboardButton(text="Janr (Genre)", callback_data="edit_f:category")
+    )
+    builder.row(
         keyboards.InlineKeyboardButton(text="Audioni tahrirlash", callback_data="edit_f:audio"),
         keyboards.InlineKeyboardButton(text="PDFni tahrirlash", callback_data="edit_f:pdf")
     )
@@ -878,6 +922,8 @@ async def select_book_to_edit(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(AdminEditBookState.field, F.data.startswith("edit_f:"))
 async def select_field_to_edit(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    book_id = data.get("book_id")
     field = callback.data.split(":")[1]
     await state.update_data(field=field)
     
@@ -905,6 +951,19 @@ async def select_field_to_edit(callback: CallbackQuery, state: FSMContext):
             "YANGI PDF faylini yuboring (ixtiyoriy):",
             reply_markup=keyboards.get_cancel_keyboard()
         )
+    elif field == "cover":
+        await state.set_state(AdminEditBookState.cover)
+        await callback.message.answer(
+            "Kitobning YANGI muqova rasmini (photo) yuboring:",
+            reply_markup=keyboards.get_cancel_keyboard()
+        )
+    elif field == "category":
+        await state.set_state(AdminEditBookState.category)
+        book = database.books.get(book_id, {})
+        current_cats = book.get("categories", [])
+        await state.update_data(selected_categories=current_cats)
+        kb = keyboards.get_multi_category_selector(database.categories, current_cats, "admin_edit_cat")
+        await callback.message.answer("Kitobning yangi janrlarini tanlang va 'Tasdiqlash' bosing:", reply_markup=kb)
     else:
         await state.set_state(AdminEditBookState.value)
         if field == "keywords":
@@ -1559,3 +1618,300 @@ async def process_del_sub_channel(callback: CallbackQuery):
         await database.save_index(callback.bot)
         await callback.message.edit_text("✅ Kanal majburiy ro'yxatdan o'chirildi.")
     await callback.answer()
+
+
+# ----------------- EXPANDED EDITING HANDLERS -----------------
+@router.message(AdminEditBookState.cover)
+async def process_edit_cover(message: Message, state: FSMContext):
+    if not message.photo:
+        await message.answer("Iltimos, rasm formatida muqova yuboring.")
+        return
+        
+    data = await state.get_data()
+    book_id = data["book_id"]
+    await state.clear()
+    
+    cover_id = message.photo[-1].file_id
+    
+    try:
+        await message.bot.send_photo(chat_id=STORAGE_CHANNEL_ID, photo=cover_id)
+    except Exception:
+        pass
+        
+    if book_id in database.books:
+        database.books[book_id]["cover_file_id"] = cover_id
+        
+        b = database.books[book_id]
+        log_text = f"#BOOK\nID: {book_id}\nTITLE: {b['title']}\nSTATUS: updated_cover"
+        try:
+            await message.bot.send_message(chat_id=STORAGE_CHANNEL_ID, text=log_text)
+        except Exception:
+            pass
+            
+        await database.save_index(message.bot)
+        
+    await message.answer("✅ Kitob muqova rasmi muvaffaqiyatli tahrirlandi.", reply_markup=keyboards.get_admin_menu())
+
+@router.callback_query(AdminEditBookState.category, F.data.startswith("admin_edit_cat_toggle:"))
+async def process_edit_category_toggle(callback: CallbackQuery, state: FSMContext):
+    cat_id = callback.data.split(":")[1]
+    data = await state.get_data()
+    selected = data.get("selected_categories", [])
+    
+    if cat_id in selected:
+        selected.remove(cat_id)
+    else:
+        selected.append(cat_id)
+        
+    await state.update_data(selected_categories=selected)
+    
+    kb = keyboards.get_multi_category_selector(database.categories, selected, "admin_edit_cat")
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
+    await callback.answer()
+
+@router.callback_query(AdminEditBookState.category, F.data == "admin_edit_cat_confirm")
+async def process_edit_category_confirm(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    selected = data.get("selected_categories", [])
+    book_id = data["book_id"]
+    await state.clear()
+    
+    if not selected:
+        await callback.answer("Kamida bitta janr tanlash majburiy!", show_alert=True)
+        return
+        
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    if book_id in database.books:
+        database.books[book_id]["categories"] = selected
+        
+        b = database.books[book_id]
+        log_text = f"#BOOK\nID: {book_id}\nTITLE: {b['title']}\nSTATUS: updated_categories"
+        try:
+            await callback.bot.send_message(chat_id=STORAGE_CHANNEL_ID, text=log_text)
+        except Exception:
+            pass
+            
+        await database.save_index(callback.bot)
+        
+    await callback.message.answer("✅ Kitob janrlari muvaffaqiyatli tahrirlandi.", reply_markup=keyboards.get_admin_menu())
+    await callback.answer()
+
+
+# ----------------- AI SWITCHBOARD & FEATURE TOGGLE -----------------
+@router.callback_query(F.data == "admin_toggle_ai")
+async def process_toggle_ai(callback: CallbackQuery):
+    enabled = not database.settings.get("ai_enabled", True)
+    database.settings["ai_enabled"] = enabled
+    await database.save_index(callback.bot)
+    
+    provider = database.settings.get("ai_provider", "GEMINI").upper()
+    analytics = database.settings.get("ai_analytics", {})
+    total_in = analytics.get("total_input_tokens", 0)
+    total_out = analytics.get("total_output_tokens", 0)
+    cost = analytics.get("total_cost", 0.0)
+    
+    dashboard_text = (
+        "🤖 *AI Tizimi Sozlamalari:*\n\n"
+        f"• *AI Holati (Kill-Switch)*: {'Yoqilgan (ON) 🟢' if enabled else 'O\'chirilgan (OFF) 🔴'}\n"
+        f"• *Provayder*: *{provider}*\n\n"
+        f"📊 *Tokenlar Sarfi Analytics:*\n"
+        f"• Kiruvchi (Input) tokenlar: {total_in:,} ta\n"
+        f"• Chiquvchi (Output) tokenlar: {total_out:,} ta\n"
+        f"• Taxminiy hisoblangan sarf: *${cost:.6f}*"
+    )
+    
+    await callback.message.edit_text(dashboard_text, reply_markup=keyboards.get_ai_settings_keyboard(enabled, provider))
+    await callback.answer("AI holati o'zgartirildi.")
+
+@router.callback_query(F.data == "admin_toggle_ai_provider")
+async def process_toggle_ai_provider(callback: CallbackQuery):
+    current = database.settings.get("ai_provider", "GEMINI").upper()
+    new_provider = "DEEPSEEK" if current == "GEMINI" else "GEMINI"
+    database.settings["ai_provider"] = new_provider
+    await database.save_index(callback.bot)
+    
+    enabled = database.settings.get("ai_enabled", True)
+    analytics = database.settings.get("ai_analytics", {})
+    total_in = analytics.get("total_input_tokens", 0)
+    total_out = analytics.get("total_output_tokens", 0)
+    cost = analytics.get("total_cost", 0.0)
+    
+    dashboard_text = (
+        "🤖 *AI Tizimi Sozlamalari:*\n\n"
+        f"• *AI Holati (Kill-Switch)*: {'Yoqilgan (ON) 🟢' if enabled else 'O\'chirilgan (OFF) 🔴'}\n"
+        f"• *Provayder*: *{new_provider}*\n\n"
+        f"📊 *Tokenlar Sarfi Analytics:*\n"
+        f"• Kiruvchi (Input) tokenlar: {total_in:,} ta\n"
+        f"• Chiquvchi (Output) tokenlar: {total_out:,} ta\n"
+        f"• Taxminiy hisoblangan sarf: *${cost:.6f}*"
+    )
+    
+    await callback.message.edit_text(dashboard_text, reply_markup=keyboards.get_ai_settings_keyboard(enabled, new_provider))
+    await callback.answer(f"AI provayderi {new_provider} ga o'zgartirildi.")
+
+@router.callback_query(F.data == "admin_clear_ai_stats")
+async def process_clear_ai_stats(callback: CallbackQuery):
+    database.settings["ai_analytics"] = {
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "total_cost": 0.0
+    }
+    await database.save_index(callback.bot)
+    
+    enabled = database.settings.get("ai_enabled", True)
+    provider = database.settings.get("ai_provider", "GEMINI").upper()
+    
+    dashboard_text = (
+        "🤖 *AI Tizimi Sozlamalari:*\n\n"
+        f"• *AI Holati (Kill-Switch)*: {'Yoqilgan (ON) 🟢' if enabled else 'O\'chirilgan (OFF) 🔴'}\n"
+        f"• *Provayder*: *{provider}*\n\n"
+        f"📊 *Tokenlar Sarfi Analytics:*\n"
+        f"• Kiruvchi (Input) tokenlar: 0 ta\n"
+        f"• Chiquvchi (Output) tokenlar: 0 ta\n"
+        f"• Taxminiy hisoblangan sarf: *$0.000000*"
+    )
+    
+    await callback.message.edit_text(dashboard_text, reply_markup=keyboards.get_ai_settings_keyboard(enabled, provider))
+    await callback.answer("Statistika tozalandi.")
+
+
+# ----------------- DYNAMIC MENU SETTINGS HANDLERS -----------------
+@router.callback_query(F.data == "menu_edit_labels")
+async def menu_edit_labels_list(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminMenuSettingsState.edit_label_select)
+    menu_cfg = getattr(database, "menu_settings", {})
+    labels = menu_cfg.get("labels", {})
+    
+    builder = keyboards.InlineKeyboardBuilder()
+    for btn_key, label in labels.items():
+        builder.row(keyboards.InlineKeyboardButton(text=f"{btn_key} -> {label}", callback_data=f"menu_lbl_sel:{btn_key}"))
+    builder.row(keyboards.InlineKeyboardButton(text="🔙 Orqaga", callback_data="cancel_fsm"))
+    
+    await callback.message.edit_text("Nomini o'zgartirmoqchi bo'lgan tugmani tanlang:", reply_markup=builder.as_markup())
+    await callback.answer()
+
+@router.callback_query(AdminMenuSettingsState.edit_label_select, F.data.startswith("menu_lbl_sel:"))
+async def menu_edit_label_select(callback: CallbackQuery, state: FSMContext):
+    btn_key = callback.data.split(":")[1]
+    await state.update_data(btn_key=btn_key)
+    await state.set_state(AdminMenuSettingsState.edit_label_value)
+    
+    await callback.message.answer(
+        f"Tugma kaliti: `{btn_key}`\n"
+        "Ushbu tugma uchun yangi yozuvni (label) yuboring:",
+        reply_markup=keyboards.get_cancel_keyboard()
+    )
+    await callback.answer()
+
+@router.message(AdminMenuSettingsState.edit_label_value)
+async def process_menu_label_value(message: Message, state: FSMContext):
+    new_label = message.text.strip()
+    if not new_label:
+        await message.answer("Tugma nomi bo'sh bo'lishi mumkin emas.")
+        return
+        
+    data = await state.get_data()
+    btn_key = data["btn_key"]
+    await state.clear()
+    
+    menu_cfg = getattr(database, "menu_settings", {})
+    labels = menu_cfg.setdefault("labels", {})
+    labels[btn_key] = new_label
+    
+    await database.save_index(message.bot)
+    await message.answer(
+        f"✅ Tugma nomi muvaffaqiyatli yangilandi:\n`{btn_key}` -> `{new_label}`",
+        reply_markup=keyboards.get_admin_menu()
+    )
+
+@router.callback_query(F.data == "menu_edit_rows")
+async def menu_edit_rows_list(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminMenuSettingsState.edit_row)
+    menu_cfg = getattr(database, "menu_settings", {})
+    rows = menu_cfg.get("rows", [])
+    
+    builder = keyboards.InlineKeyboardBuilder()
+    for idx, r in enumerate(rows):
+        row_items = ", ".join(r)
+        builder.row(keyboards.InlineKeyboardButton(text=f"Qator {idx+1}: {row_items}", callback_data=f"menu_row_sel:{idx}"))
+    builder.row(keyboards.InlineKeyboardButton(text="🔙 Orqaga", callback_data="cancel_fsm"))
+    
+    await callback.message.edit_text("Tahrirlamoqchi bo'lgan qatorni tanlang:", reply_markup=builder.as_markup())
+    await callback.answer()
+
+@router.callback_query(AdminMenuSettingsState.edit_row, F.data.startswith("menu_row_sel:"))
+async def menu_edit_row_select(callback: CallbackQuery, state: FSMContext):
+    row_idx = int(callback.data.split(":")[1])
+    await state.update_data(row_idx=row_idx)
+    
+    menu_cfg = getattr(database, "menu_settings", {})
+    rows = menu_cfg.get("rows", [])
+    current_row = rows[row_idx]
+    
+    valid_keys = [
+        "📚 Kitoblar", "📚 Kutubxonam", "🕒 Tarix", 
+        "🧠 AI Tavsiya", "💬 AI Companion", 
+        "💡 Kitob Tavsiya Qilish", "🔍 Qidiruv", 
+        "👤 Profil", "ℹ️ Yordam"
+    ]
+    
+    valid_keys_str = "\n".join([f"• `{k}`" for k in valid_keys])
+    
+    await callback.message.answer(
+        f"Siz {row_idx+1}-qatorni tahrirlashni tanladingiz.\n"
+        f"Joriy tugmalar: `{', '.join(current_row)}`\n\n"
+        "Yangi tugmalar ro'yxatini vergul bilan ajratib yuboring.\n"
+        "Faqat quyidagi kalit so'zlardan foydalanishingiz mumkin:\n"
+        f"{valid_keys_str}\n\n"
+        "Masalan: `📚 Kutubxonam, 🕒 Tarix`",
+        reply_markup=keyboards.get_cancel_keyboard()
+    )
+    await callback.answer()
+
+@router.message(AdminMenuSettingsState.edit_row)
+async def process_menu_row_value(message: Message, state: FSMContext):
+    text = message.text.strip()
+    data = await state.get_data()
+    row_idx = data["row_idx"]
+    
+    valid_keys = [
+        "📚 Kitoblar", "📚 Kutubxonam", "🕒 Tarix", 
+        "🧠 AI Tavsiya", "💬 AI Companion", 
+        "💡 Kitob Tavsiya Qilish", "🔍 Qidiruv", 
+        "👤 Profil", "ℹ️ Yordam"
+    ]
+    
+    # Parse items
+    items = [item.strip() for item in text.split(",") if item.strip()]
+    
+    # Validate items
+    invalid = [item for item in items if item not in valid_keys]
+    if invalid:
+        await message.answer(
+            f"❌ Noto'g'ri kalit so'zlar kiritildi: `{', '.join(invalid)}`.\n"
+            "Iltimos, faqat ruxsat berilgan tugmalarni kiriting."
+        )
+        return
+        
+    await state.clear()
+    
+    menu_cfg = getattr(database, "menu_settings", {})
+    rows = menu_cfg.setdefault("rows", [])
+    
+    if len(items) == 0:
+        # Delete row if empty
+        rows.pop(row_idx)
+        action_msg = "o'chirildi"
+    else:
+        rows[row_idx] = items
+        action_msg = "yangilandi"
+        
+    await database.save_index(message.bot)
+    await message.answer(f"✅ {row_idx+1}-qator muvaffaqiyatli {action_msg}!", reply_markup=keyboards.get_admin_menu())

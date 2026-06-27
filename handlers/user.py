@@ -10,8 +10,9 @@ from aiogram.fsm.context import FSMContext
 
 from config import OWNER_ID, STORAGE_CHANNEL_ID
 import database
-from states import UserState, UserRecForm, UserProfileForm, UserContactForm
+from states import UserState, UserRecForm, UserProfileForm, UserContactForm, UserAIRecommendationState, UserAIChatState
 import keyboards
+import ai_service
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -103,7 +104,7 @@ async def share_cmd_shortcut(message: Message):
     await message.answer(share_text)
 
 # ----------------- KUTUBXONAM -----------------
-@router.message(F.text == "📚 Kutubxonam")
+@router.message(database.is_menu_button("📚 Kutubxonam"))
 async def view_library_menu(message: Message):
     user_id = message.from_user.id
     user_data = database.users.get(user_id, {})
@@ -140,7 +141,7 @@ async def view_lib_books(callback: CallbackQuery):
         
     builder = keyboards.InlineKeyboardBuilder()
     for b in fav_books:
-        builder.row(keyboards.InlineKeyboardButton(text=f"📖 {b['title']}", callback_data=f"view_book:{b['id']}"))
+        builder.row(keyboards.InlineKeyboardButton(text=f"📖 {b['title']}", callback_data=f"view_book:{b['id']}:lib_fav"))
     builder.row(keyboards.InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_to_lib"))
     
     await callback.message.edit_text("📚 *Kutubxonangizdagi kitoblar:*", reply_markup=builder.as_markup())
@@ -164,7 +165,7 @@ async def view_lib_history(callback: CallbackQuery):
         
     builder = keyboards.InlineKeyboardBuilder()
     for b in hist_books:
-        builder.row(keyboards.InlineKeyboardButton(text=f"🕒 {b['title']}", callback_data=f"view_book:{b['id']}"))
+        builder.row(keyboards.InlineKeyboardButton(text=f"🕒 {b['title']}", callback_data=f"view_book:{b['id']}:lib_hist"))
     builder.row(keyboards.InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_to_lib"))
     
     await callback.message.edit_text("🕒 *Oxirgi eshitilgan kitoblar:*", reply_markup=builder.as_markup())
@@ -233,11 +234,11 @@ async def view_history_cmd(message: Message):
         
     builder = keyboards.InlineKeyboardBuilder()
     for b in hist_books:
-        builder.row(keyboards.InlineKeyboardButton(text=f"🕒 {b['title']} - {b['author']}", callback_data=f"view_book:{b['id']}"))
+        builder.row(keyboards.InlineKeyboardButton(text=f"🕒 {b['title']} - {b['author']}", callback_data=f"view_book:{b['id']}:lib_hist"))
     await message.answer("🕒 *Oxirgi eshitilgan kitoblar:*", reply_markup=builder.as_markup())
 
 # ----------------- PROFIL -----------------
-@router.message(F.text == "👤 Profil")
+@router.message(database.is_menu_button("👤 Profil"))
 async def view_profile(message: Message):
     user_id = message.from_user.id
     user_data = database.users.get(user_id)
@@ -377,7 +378,7 @@ async def process_profile_interests(message: Message, state: FSMContext):
     )
 
 # ----------------- KITOBLLAR / CATEGORIES -----------------
-@router.message(F.text == "📚 Kitoblar")
+@router.message(database.is_menu_button("📚 Kitoblar"))
 async def view_categories_menu(message: Message):
     active_cats = {k: v for k, v in database.categories.items() if v.get("status", "active") == "active"}
     if not active_cats:
@@ -425,7 +426,7 @@ async def show_books_page(callback: CallbackQuery, cat_id: str, books_list: list
     
     builder = keyboards.InlineKeyboardBuilder()
     for b in page_books:
-        builder.row(keyboards.InlineKeyboardButton(text=f"📖 {b['title']} - {b['author']}", callback_data=f"view_book:{b['id']}"))
+        builder.row(keyboards.InlineKeyboardButton(text=f"📖 {b['title']} - {b['author']}", callback_data=f"view_book:{b['id']}:cat_{cat_id}_{page}"))
         
     pag_buttons = []
     if page > 1:
@@ -463,7 +464,7 @@ async def back_to_categories_callback(callback: CallbackQuery):
     await callback.answer()
 
 # ----------------- QIDIRUV / SEARCH -----------------
-@router.message(F.text == "🔍 Qidiruv")
+@router.message(database.is_menu_button("🔍 Qidiruv"))
 async def start_search(message: Message, state: FSMContext):
     await state.set_state(UserState.search)
     # Include an inline cancel button to FSM search
@@ -508,7 +509,7 @@ async def process_search_query(message: Message, state: FSMContext):
         
     builder = keyboards.InlineKeyboardBuilder()
     for b in found_books[:10]:
-        builder.row(keyboards.InlineKeyboardButton(text=f"📖 {b['title']} - {b['author']}", callback_data=f"view_book:{b['id']}"))
+        builder.row(keyboards.InlineKeyboardButton(text=f"📖 {b['title']} - {b['author']}", callback_data=f"view_book:{b['id']}:search"))
     
     user_id = message.from_user.id
     await message.answer(
@@ -520,7 +521,9 @@ async def process_search_query(message: Message, state: FSMContext):
 # ----------------- VIEW BOOK DETAILS -----------------
 @router.callback_query(F.data.startswith("view_book:"))
 async def view_book_details(callback: CallbackQuery):
-    book_id = callback.data.split(":")[1]
+    parts = callback.data.split(":")
+    book_id = parts[1]
+    src = parts[2] if len(parts) > 2 else ""
     book = database.books.get(book_id)
     if not book or book.get("status", "approved") != "approved":
         await callback.answer("Kitob topilmadi yoki o'chirilgan.", show_alert=True)
@@ -562,7 +565,7 @@ async def view_book_details(callback: CallbackQuery):
         f"📝 *Tavsif*:\n{desc}"
     )
     
-    kb = keyboards.get_book_details_keyboard(book_id, is_fav, has_pdf)
+    kb = keyboards.get_book_details_keyboard(book_id, is_fav, has_pdf, src=src)
     
     if book.get("cover_file_id"):
         try:
@@ -707,7 +710,9 @@ async def download_book_pdf(callback: CallbackQuery):
 # ----------------- FAVORITES (KUTUBXONAM) TOGGLE -----------------
 @router.callback_query(F.data.startswith("toggle_fav:"))
 async def toggle_favorite(callback: CallbackQuery):
-    book_id = callback.data.split(":")[1]
+    parts = callback.data.split(":")
+    book_id = parts[1]
+    src = parts[2] if len(parts) > 2 else ""
     user_id = callback.from_user.id
     
     user_data = database.users.setdefault(user_id, {
@@ -730,7 +735,7 @@ async def toggle_favorite(callback: CallbackQuery):
     
     has_pdf = bool(database.books.get(book_id, {}).get("pdf_file_id"))
     is_now_fav = book_id in favs
-    kb = keyboards.get_book_details_keyboard(book_id, is_now_fav, has_pdf)
+    kb = keyboards.get_book_details_keyboard(book_id, is_now_fav, has_pdf, src=src)
     
     try:
         await callback.message.edit_reply_markup(reply_markup=kb)
@@ -893,7 +898,7 @@ async def process_contact_message(message: Message, state: FSMContext):
     )
 
 # ----------------- BOOK RECOMMENDATION SYSTEM (WITH MULTI-GENRES & AUDIOS) -----------------
-@router.message(F.text == "💡 Kitob Tavsiya Qilish")
+@router.message(database.is_menu_button("💡 Kitob Tavsiya Qilish"))
 async def start_recommendation(message: Message, state: FSMContext):
     await state.set_state(UserRecForm.title)
     builder = keyboards.InlineKeyboardBuilder()
@@ -1252,3 +1257,335 @@ async def process_rec_confirmation(callback: CallbackQuery, state: FSMContext):
             await send_previews(OWNER_ID)
         except Exception as e:
             logger.warning(f"Could not notify owner: {e}")
+
+
+# ----------------- BACK TO BOOKS FREEZE FIX -----------------
+@router.callback_query(F.data.startswith("back_to_books:"))
+async def handle_back_to_books(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    book_id = parts[1]
+    src = parts[2] if len(parts) > 2 else ""
+    
+    # Depending on the source, route back
+    if src.startswith("cat_"):
+        src_parts = src.split("_")
+        cat_id = src_parts[1]
+        page = int(src_parts[2]) if len(src_parts) > 2 else 1
+        
+        cat_books = [b for b in database.books.values() if cat_id in b.get("categories", []) and b.get("status", "approved") == "approved"]
+        cat_books = sort_books(cat_books)
+        
+        # Show category page
+        await show_books_page(callback, cat_id, cat_books, page)
+    elif src == "lib_fav":
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await view_lib_books(callback)
+    elif src == "lib_hist":
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await view_lib_history(callback)
+    elif src == "search":
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        user_id = callback.from_user.id
+        await callback.message.answer("Qidiruv natijalariga qaytish uchun qayta qidiring yoki menyudan foydalaning.", 
+                                      reply_markup=keyboards.get_main_menu(database.is_admin(user_id)))
+        await callback.answer()
+    elif src.startswith("ai_rec"):
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        user_id = callback.from_user.id
+        await callback.message.answer(
+            "AI Tavsiyalariga qaytish uchun menyudan '🧠 AI Tavsiya' tugmasini tanlang.",
+            reply_markup=keyboards.get_main_menu(database.is_admin(user_id))
+        )
+        await callback.answer()
+    else:
+        # Fallback to categories list
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        active_cats = {k: v for k, v in database.categories.items() if v.get("status", "active") == "active"}
+        cols = database.settings.get("categories_columns", 2)
+        order = database.settings.get("categories_order", [])
+        kb = keyboards.get_categories_layout_keyboard(active_cats, "user_view_cat", columns=cols, order=order)
+        await callback.message.answer("📚 *Janrlardan birini tanlang:*", reply_markup=kb)
+        await callback.answer()
+
+
+# ----------------- AI PSYCHOLOGICAL RECOMMENDATION ENGINE -----------------
+MOOD_OPTIONS = [
+    "😊 Xursand / Ko'tarinki",
+    "😔 Charchagan / G'amgin",
+    "🤔 Fikrlashga moyil / Jiddiy",
+    "🧘 Xotirjam / Orombaxsh"
+]
+
+INTEREST_OPTIONS = [
+    "💡 Shaxsiy rivojlanish / Muvaffaqiyat",
+    "🎭 Siyosat / Tarix / Hayotiy",
+    "🔮 Sirlar / Detektiv / Sarguzasht",
+    "❤️ Sevgi / Muhabbat"
+]
+
+EXPECTATION_OPTIONS = [
+    "🚀 Yangi motivatsiya va kuch",
+    "🧠 Kuchli falsafiy fikrlar",
+    "🌌 Hayoliy dunyoga sayohat",
+    "😴 Shunchaki dam olish"
+]
+
+@router.message(database.is_menu_button("🧠 AI Tavsiya"))
+async def start_ai_recommendation(message: Message, state: FSMContext):
+    # Check if AI is enabled
+    if not database.settings.get("ai_enabled", True):
+        await message.answer("⚠️ Kechirasiz, AI funksiyalari hozirda vaqtincha o'chirilgan.")
+        return
+        
+    await state.set_state(UserAIRecommendationState.mood)
+    kb = keyboards.get_quiz_keyboard(MOOD_OPTIONS, "quiz_mood")
+    await message.answer(
+        "🧠 *AI Psixologik Tavsiya Tizimi*\n\n"
+        "Sizning hozirgi ruhiy holatingizga mos kitoblarni tanlab berishim uchun quyidagi savollarga javob bering.\n\n"
+        "1. *Hozirgi kayfiyatingiz qanday?*",
+        reply_markup=kb
+    )
+
+@router.callback_query(UserAIRecommendationState.mood, F.data.startswith("quiz_mood:"))
+async def process_quiz_mood(callback: CallbackQuery, state: FSMContext):
+    idx = int(callback.data.split(":")[1])
+    mood = MOOD_OPTIONS[idx]
+    await state.update_data(mood=mood)
+    
+    await state.set_state(UserAIRecommendationState.interest)
+    kb = keyboards.get_quiz_keyboard(INTEREST_OPTIONS, "quiz_interest")
+    await callback.message.edit_text(
+        "🧠 *AI Psixologik Tavsiya Tizimi*\n\n"
+        f"Kayfiyat: {mood}\n\n"
+        "2. *Sizni hozirda qaysi mavzu ko'proq qiziqtiradi?*",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+@router.callback_query(UserAIRecommendationState.interest, F.data.startswith("quiz_interest:"))
+async def process_quiz_interest(callback: CallbackQuery, state: FSMContext):
+    idx = int(callback.data.split(":")[1])
+    interest = INTEREST_OPTIONS[idx]
+    data = await state.get_data()
+    mood = data["mood"]
+    await state.update_data(interest=interest)
+    
+    await state.set_state(UserAIRecommendationState.expectation)
+    kb = keyboards.get_quiz_keyboard(EXPECTATION_OPTIONS, "quiz_expect")
+    await callback.message.edit_text(
+        "🧠 *AI Psixologik Tavsiya Tizimi*\n\n"
+        f"Kayfiyat: {mood}\n"
+        f"Qiziqish: {interest}\n\n"
+        "3. *Kitobdan nima kutmoqdasiz?*",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+@router.callback_query(UserAIRecommendationState.expectation, F.data.startswith("quiz_expect:"))
+async def process_quiz_expectation(callback: CallbackQuery, state: FSMContext):
+    idx = int(callback.data.split(":")[1])
+    expect = EXPECTATION_OPTIONS[idx]
+    data = await state.get_data()
+    mood = data["mood"]
+    interest = data["interest"]
+    
+    await callback.message.edit_text("⌛ AI siz uchun eng mos kitoblarni tahlil qilmoqda. Iltimos, kuting...")
+    await callback.answer()
+    
+    # Fetch all active books to build system context
+    active_books = [b for b in database.books.values() if b.get("status", "approved") == "approved"]
+    if not active_books:
+        await callback.message.answer(
+            "Tizimda tavsiya qilish uchun kitoblar yetarli emas.",
+            reply_markup=keyboards.get_main_menu(database.is_admin(callback.from_user.id))
+        )
+        await state.clear()
+        return
+        
+    books_context_list = []
+    for b in active_books[:30]:  # Limit context size to fit token limits
+        books_context_list.append(f"ID: {b['id']} | Title: {b['title']} | Author: {b['author']} | Description: {b.get('description', '')[:100]}")
+    books_context = "\n".join(books_context_list)
+    
+    system_instruction = (
+        "Siz kitob tavsiya qiluvchi AI tizimsiz. Sizga berilgan kitoblar ro'yxatidan foydalanuvchining psixologik javoblariga mos keladigan eng yaxshi 3 ta kitobni tanlashingiz va tavsiya sababini ko'rsatishingiz lozim.\n"
+        "Faqat va faqat quyidagi formatda javob bering, har bir kitob uchun alohida qatorlarda:\n"
+        "[ID: <kitob_id>] - <kitob_nomi> - <muallif>\n"
+        "Tavsiya sababi: <sabab>\n\n"
+        "Eslatma: kitob ID raqamlari berilgan ro'yxatdagidek 100% aniq bo'lsin!"
+    )
+    
+    prompt = (
+        f"Mavjud kitoblar:\n{books_context}\n\n"
+        f"Foydalanuvchi javoblari:\n"
+        f"1. Kayfiyat: {mood}\n"
+        f"2. Qiziqish mavzusi: {interest}\n"
+        f"3. Kutish: {expect}\n\n"
+        "Eng mos keladigan 3 ta kitobni tavsiya qiling."
+    )
+    
+    ai_response = await ai_service.generate_response(prompt, system_instruction)
+    
+    # Parse the recommended book IDs from AI response
+    recommended_ids = []
+    lines = ai_response.split("\n")
+    for line in lines:
+        if "[ID:" in line:
+            try:
+                parts = line.split("]")[0].split("[ID:")
+                if len(parts) > 1:
+                    bid = parts[1].strip()
+                    if bid in database.books:
+                        recommended_ids.append(bid)
+            except Exception:
+                pass
+                
+    # Remove duplicate recommendations
+    recommended_ids = list(dict.fromkeys(recommended_ids))
+    
+    await state.clear()
+    
+    # Prepare text summary
+    response_clean = ai_response.replace("[ID:", "").replace("]", "")
+    
+    summary_text = (
+        "🧠 *AI Psixologik Tavsiyalari:*\n\n"
+        f"{response_clean}\n\n"
+        "Tavsiya etilgan kitoblarni quyidagi tugmalar orqali batafsil ko'rishingiz mumkin:"
+    )
+    
+    builder = keyboards.InlineKeyboardBuilder()
+    for bid in recommended_ids:
+        b_info = database.books[bid]
+        builder.row(keyboards.InlineKeyboardButton(text=f"📖 {b_info['title']}", callback_data=f"view_book:{bid}:ai_rec"))
+        
+    if recommended_ids:
+        ids_str = ",".join(recommended_ids)
+        if len(ids_str) < 50:  # Check callback payload limits
+            builder.row(keyboards.InlineKeyboardButton(text="📥 Hammasini Kutubxonamga Qo'shish", callback_data=f"ai_add_all:{ids_str}"))
+            
+    builder.row(keyboards.InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="back_to_cats"))
+    
+    # Delete the waiting message
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    await callback.message.answer(summary_text, reply_markup=builder.as_markup())
+
+@router.callback_query(F.data.startswith("ai_add_all:"))
+async def process_ai_add_all(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    ids_str = parts[1]
+    book_ids = [bid.strip() for bid in ids_str.split(",") if bid.strip()]
+    
+    user_id = callback.from_user.id
+    user_data = database.users.setdefault(user_id, {
+        "id": user_id,
+        "favorites": [],
+        "history": [],
+        "joined_at": datetime.now().isoformat()
+    })
+    
+    favs = user_data.setdefault("favorites", [])
+    added_count = 0
+    for bid in book_ids:
+        if bid in database.books and bid not in favs:
+            favs.append(bid)
+            added_count += 1
+            
+    user_data["favorites"] = favs
+    await database.save_index(callback.bot)
+    
+    await callback.answer(f"✅ {added_count} ta yangi kitob kutubxonangizga qo'shildi!", show_alert=True)
+
+
+# ----------------- AI BOOK COMPANION (RAG FREE CHAT) -----------------
+@router.message(database.is_menu_button("💬 AI Companion"))
+async def start_ai_companion(message: Message, state: FSMContext):
+    if not database.settings.get("ai_enabled", True):
+        await message.answer("⚠️ Kechirasiz, AI funksiyalari hozirda vaqtincha o'chirilgan.")
+        return
+        
+    await state.set_state(UserAIChatState.chat)
+    
+    kb = keyboards.ReplyKeyboardBuilder()
+    kb.row(keyboards.KeyboardButton(text="❌ Chiqish"))
+    
+    await message.answer(
+        "💬 *AI Companion (Kitob Hamrohi) suhbat rejimiga xush kelibsiz!*\n\n"
+        "Men botdagi mavjud kitoblar haqida batafsil ma'lumotga egaman. "
+        "Mendan istalgan kitob, muallif yoki janr haqida so'rashingiz mumkin.\n\n"
+        "Suhbatdan chiqish uchun quyidagi *'❌ Chiqish'* tugmasini bosing.",
+        reply_markup=kb.as_markup(resize_keyboard=True)
+    )
+
+@router.message(UserAIChatState.chat)
+async def process_ai_companion_chat(message: Message, state: FSMContext):
+    text = message.text.strip() if message.text else ""
+    if not text:
+        await message.answer("Iltimos, faqat matnli xabarlar yuboring.")
+        return
+        
+    if text == "❌ Chiqish":
+        await state.clear()
+        user_id = message.from_user.id
+        await message.answer(
+            "Suhbat yakunlandi. Asosiy menyuga qaytdingiz.",
+            reply_markup=keyboards.get_main_menu(database.is_admin(user_id))
+        )
+        return
+        
+    status_msg = await message.answer("💬 *AI o'ylamoqda...*")
+    
+    # Fetch all active books to build RAG context
+    active_books = [b for b in database.books.values() if b.get("status", "approved") == "approved"]
+    
+    books_context_list = []
+    for b in active_books[:40]:  # Limit context size to fit token limits
+        cat_names = []
+        for c_id in b.get("categories", []):
+            cat_info = database.categories.get(c_id)
+            if cat_info:
+                cat_names.append(cat_info["name"])
+        cat_str = ", ".join(cat_names)
+        
+        books_context_list.append(
+            f"- Sarlavha: {b['title']}\n"
+            f"  Muallif: {b['author']}\n"
+            f"  Janrlar: {cat_str}\n"
+            f"  Tavsif: {b.get('description', '')[:150]}"
+        )
+    books_context = "\n\n".join(books_context_list)
+    
+    system_instruction = (
+        "Siz \"Uzbek Audio Book Bot\" tizimining kitob hamrohi (AI Companion) hisoblanasiz.\n"
+        "Foydalanuvchi bilan o'zbek tilida, do'stona va kitobxonlarga xos ohangda muloqot qiling.\n\n"
+        "Botdagi mavjud kitoblar ro'yxati:\n"
+        f"{books_context}\n\n"
+        "Qoidalar:\n"
+        "1. Foydalanuvchiga faqat yuqoridagi kitoblar ro'yxatida bor bo'lgan kitoblarni tavsiya qiling va ular haqida gapiring.\n"
+        "2. Agar foydalanuvchi ro'yxatda yo'q kitobni so'rasa, u kitob botda yo'qligini, lekin u kitobni menyudagi '💡 Kitob Tavsiya Qilish' tugmasi orqali botga qo'shishni so'rashi mumkinligini muloyimlik bilan tushuntiring.\n"
+        "3. Har doim qisqa va qiziqarli javoblar bering."
+    )
+    
+    ai_response = await ai_service.generate_response(text, system_instruction)
+    
+    await status_msg.delete()
+    await message.answer(ai_response)
