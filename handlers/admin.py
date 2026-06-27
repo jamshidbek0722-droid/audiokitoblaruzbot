@@ -879,18 +879,51 @@ async def process_book_confirmation(callback: CallbackQuery, state: FSMContext):
 
 # ----------------- EDIT BOOK (WITH MULTI-AUDIOS AND PDF EDITING) -----------------
 @router.callback_query(F.data == "admin_edit_book")
+@router.callback_query(F.data.startswith("admin_edit_page:"))
 async def start_edit_book(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    page = int(parts[1]) if len(parts) > 1 else 1
+    
     active_books = [b for b in database.books.values() if b.get("status", "approved") == "approved"]
     if not active_books:
         await callback.answer("Tizimda tahrirlash uchun kitoblar mavjud emas.", show_alert=True)
         return
         
+    active_books.sort(key=lambda x: x.get("title", "").lower())
+    
+    PAGE_SIZE = 10
+    total = len(active_books)
+    total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
+    
+    if page < 1: page = 1
+    if page > total_pages: page = total_pages
+    
+    start_idx = (page - 1) * PAGE_SIZE
+    end_idx = start_idx + PAGE_SIZE
+    page_books = active_books[start_idx:end_idx]
+    
     builder = keyboards.InlineKeyboardBuilder()
-    for b in active_books[:20]:
+    for b in page_books:
         builder.row(keyboards.InlineKeyboardButton(text=f"{b['title']} - {b['author']}", callback_data=f"edit_b_sel:{b['id']}"))
         
+    nav_row = []
+    if page > 1:
+        nav_row.append(keyboards.InlineKeyboardButton(text="⏪ Oldingi", callback_data=f"admin_edit_page:{page - 1}"))
+    nav_row.append(keyboards.InlineKeyboardButton(text=f"{page}/{total_pages}", callback_data="none"))
+    if page < total_pages:
+        nav_row.append(keyboards.InlineKeyboardButton(text="Keyingi ⏩", callback_data=f"admin_edit_page:{page + 1}"))
+    builder.row(*nav_row)
+    
+    builder.row(keyboards.InlineKeyboardButton(text="🔙 Orqaga", callback_data="cancel_fsm"))
+    
+    text = "Tahrirlamoqchi bo'lgan kitobni tanlang:"
     await state.set_state(AdminEditBookState.select)
-    await callback.message.answer("Tahrirlamoqchi bo'lgan kitobni tanlang:", reply_markup=builder.as_markup())
+    
+    try:
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    except Exception:
+        await callback.message.answer(text, reply_markup=builder.as_markup())
+        
     await callback.answer()
 
 @router.callback_query(AdminEditBookState.select, F.data.startswith("edit_b_sel:"))
