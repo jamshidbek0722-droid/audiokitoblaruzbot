@@ -1767,7 +1767,12 @@ async def process_toggle_ai(callback: CallbackQuery):
 @router.callback_query(F.data == "admin_toggle_ai_provider")
 async def process_toggle_ai_provider(callback: CallbackQuery):
     current = database.settings.get("ai_provider", "GEMINI").upper()
-    new_provider = "DEEPSEEK" if current == "GEMINI" else "GEMINI"
+    if current == "GEMINI":
+        new_provider = "DEEPSEEK"
+    elif current == "DEEPSEEK":
+        new_provider = "GROQ"
+    else:
+        new_provider = "GEMINI"
     database.settings["ai_provider"] = new_provider
     await database.save_index(callback.bot)
     

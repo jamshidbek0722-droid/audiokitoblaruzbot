@@ -319,7 +319,12 @@ def get_ai_settings_keyboard(enabled: bool, provider: str) -> InlineKeyboardMark
     builder.row(InlineKeyboardButton(text=toggle_text, callback_data="admin_toggle_ai"))
     
     prov_text = f"Provayder: {provider}"
-    toggle_prov_text = "🤖 DeepSeek ga o'tish" if provider == "GEMINI" else "🤖 Gemini ga o'tish"
+    if provider == "GEMINI":
+        toggle_prov_text = "🤖 DeepSeek ga o'tish"
+    elif provider == "DEEPSEEK":
+        toggle_prov_text = "🤖 Groq ga o'tish"
+    else:
+        toggle_prov_text = "🤖 Gemini ga o'tish"
     builder.row(InlineKeyboardButton(text=prov_text, callback_data="none"))
     builder.row(InlineKeyboardButton(text=toggle_prov_text, callback_data="admin_toggle_ai_provider"))
     

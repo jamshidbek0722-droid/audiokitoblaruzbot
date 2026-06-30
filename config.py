@@ -18,5 +18,6 @@ REQUIRED_CHANNEL_IDS = []  # Can also be dynamically loaded/saved in index
 # AI API Keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 

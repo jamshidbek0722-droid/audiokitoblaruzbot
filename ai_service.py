@@ -15,6 +15,10 @@ PRICING = {
     "DEEPSEEK": {
         "input": 0.14,
         "output": 0.28
+    },
+    "GROQ": {
+        "input": 0.59,
+        "output": 0.79
     }
 }
 
@@ -24,7 +28,7 @@ async def generate_response(prompt: str, system_instruction: str = "") -> str:
     Integrates cost calculation and logs usage into MongoDB.
     """
     provider = database.settings.get("ai_provider", "GEMINI").upper()
-    if provider not in ["GEMINI", "DEEPSEEK"]:
+    if provider not in ["GEMINI", "DEEPSEEK", "GROQ"]:
         provider = "GEMINI"
         
     ai_enabled = database.settings.get("ai_enabled", True)
@@ -117,6 +121,50 @@ async def generate_response(prompt: str, system_instruction: str = "") -> str:
         except Exception as e:
             logger.error(f"Error querying DeepSeek API: {e}", exc_info=True)
             return "⚠️ DeepSeek API bilan bog'lanishda xatolik yuz berdi (Vaqt tugadi yoki tarmoq xatosi)."
+
+    elif provider == "GROQ":
+        api_key = config.GROQ_API_KEY
+        if not api_key:
+            logger.error("GROQ_API_KEY is not configured in environment variables.")
+            return "⚠️ Groq API kaliti topilmadi. Iltimos, admin bilan bog'laning."
+            
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [
+                {"role": "user", "content": full_prompt}
+            ],
+            "stream": False
+        }
+        
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as session:
+                async with session.post(url, json=payload, headers=headers) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(f"Groq API returned status {response.status}: {error_text}")
+                        return "⚠️ Groq serveridan noto'g'ri javob oldik. Iltimos, qayta urinib ko'ring."
+                        
+                    res_json = await response.json()
+                    choices = res_json.get("choices", [])
+                    if not choices:
+                        return "⚠️ Groq hech qanday javob qaytarmadi."
+                        
+                    text = choices[0].get("message", {}).get("content", "")
+                    
+                    usage = res_json.get("usage", {})
+                    input_tokens = usage.get("prompt_tokens", 0)
+                    output_tokens = usage.get("completion_tokens", 0)
+                    
+                    await log_usage("GROQ", input_tokens, output_tokens)
+                    return text
+        except Exception as e:
+            logger.error(f"Error querying Groq API: {e}", exc_info=True)
+            return "⚠️ Groq API bilan bog'lanishda xatolik yuz berdi (Vaqt tugadi yoki tarmoq xatosi)."
 
 async def log_usage(provider: str, input_tokens: int, output_tokens: int):
     """
