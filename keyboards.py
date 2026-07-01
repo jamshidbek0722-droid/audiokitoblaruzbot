@@ -12,7 +12,7 @@ def get_main_menu(is_user_admin: bool = False) -> ReplyKeyboardMarkup:
     rows = menu_cfg.get("rows", [
         ["📚 Kitoblar"],
         ["📚 Kutubxonam", "🕒 Tarix"],
-        ["🧠 AI Tavsiya", "💬 AI Companion"],
+        ["🧠 AI Tavsiya", "💬 AI bilan suhbat"],
         ["💡 Kitob Tavsiya Qilish", "🔍 Qidiruv"],
         ["👤 Profil", "ℹ️ Yordam"]
     ])
@@ -26,7 +26,7 @@ def get_main_menu(is_user_admin: bool = False) -> ReplyKeyboardMarkup:
         filtered_row = []
         for btn_key in r:
             # Check if this is an AI button and AI is disabled
-            if not ai_enabled and btn_key in ["🧠 AI Tavsiya", "💬 AI Companion"]:
+            if not ai_enabled and btn_key in ["🧠 AI Tavsiya", "💬 AI bilan suhbat"]:
                 continue
             
             # Get label (fallback to key)

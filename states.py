@@ -78,9 +78,7 @@ class AdminMenuSettingsState(StatesGroup):
 
 # User AI Recommendation Quiz
 class UserAIRecommendationState(StatesGroup):
-    mood = State()
-    interest = State()
-    expectation = State()
+    quiz = State()
 
 # User AI Companion Chat
 class UserAIChatState(StatesGroup):

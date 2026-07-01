@@ -173,14 +173,46 @@ async def load_index(bot: Bot):
         if menu_doc:
             menu_copy = menu_doc.copy()
             del menu_copy["_id"]
+            
+            # Legacy conversion: rename '💬 AI Companion' key/labels to '💬 AI bilan suhbat'
+            had_legacy = False
+            if "labels" in menu_copy and "💬 AI Companion" in menu_copy["labels"]:
+                val = menu_copy["labels"].pop("💬 AI Companion")
+                if val == "💬 AI Companion":
+                    menu_copy["labels"]["💬 AI bilan suhbat"] = "💬 AI bilan suhbat"
+                else:
+                    menu_copy["labels"]["💬 AI bilan suhbat"] = val
+                had_legacy = True
+                    
+            if "rows" in menu_copy:
+                new_rows = []
+                for row in menu_copy["rows"]:
+                    new_row = []
+                    for btn in row:
+                        if btn == "💬 AI Companion":
+                            new_row.append("💬 AI bilan suhbat")
+                            had_legacy = True
+                        else:
+                            new_row.append(btn)
+                    new_rows.append(new_row)
+                menu_copy["rows"] = new_rows
+                
             menu_settings.update(menu_copy)
+            
+            # Instantly save clean settings to MongoDB
+            if had_legacy:
+                await menu_settings_col.update_one(
+                    {"_id": "main_menu"},
+                    {"$set": menu_settings},
+                    upsert=True
+                )
         else:
             # Default menu layout settings
             menu_settings.update({
                 "rows": [
                     ["📚 Kitoblar"],
                     ["📚 Kutubxonam", "🕒 Tarix"],
-                    ["🧠 AI Tavsiya", "💬 AI Companion"],
+                    ["🧠 AI Tavsiya", "💬 AI bilan suhbat"],
                     ["💡 Kitob Tavsiya Qilish", "🔍 Qidiruv"],
                     ["👤 Profil", "ℹ️ Yordam"]
                 ],
@@ -189,7 +221,7 @@ async def load_index(bot: Bot):
                     "📚 Kutubxonam": "📚 Kutubxonam",
                     "🕒 Tarix": "🕒 Tarix",
                     "🧠 AI Tavsiya": "🧠 AI Tavsiya",
-                    "💬 AI Companion": "💬 AI Companion",
+                    "💬 AI bilan suhbat": "💬 AI bilan suhbat",
                     "💡 Kitob Tavsiya Qilish": "💡 Kitob Tavsiya Qilish",
                     "🔍 Qidiruv": "🔍 Qidiruv",
                     "👤 Profil": "👤 Profil",

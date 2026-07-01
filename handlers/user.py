@@ -1324,25 +1324,187 @@ async def handle_back_to_books(callback: CallbackQuery):
 
 
 # ----------------- AI PSYCHOLOGICAL RECOMMENDATION ENGINE -----------------
-MOOD_OPTIONS = [
-    "😊 Xursand / Ko'tarinki",
-    "😔 Charchagan / G'amgin",
-    "🤔 Fikrlashga moyil / Jiddiy",
-    "🧘 Xotirjam / Orombaxsh"
-]
-
-INTEREST_OPTIONS = [
-    "💡 Shaxsiy rivojlanish / Muvaffaqiyat",
-    "🎭 Siyosat / Tarix / Hayotiy",
-    "🔮 Sirlar / Detektiv / Sarguzasht",
-    "❤️ Sevgi / Muhabbat"
-]
-
-EXPECTATION_OPTIONS = [
-    "🚀 Yangi motivatsiya va kuch",
-    "🧠 Kuchli falsafiy fikrlar",
-    "🌌 Hayoliy dunyoga sayohat",
-    "😴 Shunchaki dam olish"
+PSYCHOLOGICAL_QUESTIONS = [
+    {
+        "q": "Bo'sh vaqtingizda odatda nima qilishni afzal ko'rasiz?",
+        "options": [
+            "🧘 Xolg'izlikda kitob o'qish yoki o'ylash",
+            "👥 Do'stlar davrasida suhbatlashish",
+            "🏃 Faol sport yoki sayohat qilish",
+            "🎨 Ijod qilish yoki yangi narsa o'rganish"
+        ]
+    },
+    {
+        "q": "Hayotdagi qiyinchiliklarga qanday munosabatda bo'lasiz?",
+        "options": [
+            "🧠 Tahlil qilib, mantiqiy yechim izlayman",
+            "🔥 Ichki kuch va motivatsiya bilan kurashaman",
+            "🧘 Hammasi yaxshilikka deb, xotirjam qabul qilaman",
+            "💬 Boshqalardan maslahat va yordam so'rayman"
+        ]
+    },
+    {
+        "q": "Sizni ko'proq qanday mavzudagi savollar o'ylantiradi?",
+        "options": [
+            "🌌 Koinot va hayotning yaratilish sirlari",
+            "💡 Qanday qilib muvaffaqiyatga erishish yo'llari",
+            "🎭 Insonlar orasidagi munosabatlar va tuyg'ular",
+            "⚙️ Texnologiyalar va kelajak taraqqiyoti"
+        ]
+    },
+    {
+        "q": "Dunyoqarashingiz ko'proq qaysi oqimga yaqin?",
+        "options": [
+            "🧘 Ratsionalizm (mantiq va ilm-fan)",
+            "💫 Idealizm (g'oyalar va orzular)",
+            "⚖️ Realizm (borliqni boricha ko'rish)",
+            "✨ Mistika (taqdir va o'ziga xos tushunchalar)"
+        ]
+    },
+    {
+        "q": "Odamlar bilan muloqotda siz uchun eng muhimi nima?",
+        "options": [
+            "🤝 Samimiylik va chuqur hissiy bog'liqlik",
+            "💡 Fikr almashish va intellektual suhbat",
+            "🚀 Hamkorlik va birgalikda maqsadlarga erishish",
+            "🎉 Qiziqarli va quvnoq vaqt o'tkazish"
+        ]
+    },
+    {
+        "q": "Yangi g'oyalarga qanday qaraysiz?",
+        "options": [
+            "🧐 Ehtiyotkorlik va shubha bilan",
+            "🤩 Katta qiziqish va ilhom bilan",
+            "📊 Mantiqiy tahlil qilib, foydasini o'lchayman",
+            "🛠️ Darhol amalda sinab ko'rishni xohlayman"
+        ]
+    },
+    {
+        "q": "Qaror qabul qilishda nimalarga tayanadigan insonsiz?",
+        "options": [
+            "🧠 Faqat mantiqiy faktlarga",
+            "❤️ Yurak amri va his-tuyg'ularimga",
+            "⏳ Hayotiy tajribam va intuitsiyaga",
+            "👥 Ko'pchilikning fikri va maslahatiga"
+        ]
+    },
+    {
+        "q": "Muomala va xulq-atvorda qaysi xususiyat sizga ko'proq xos?",
+        "options": [
+            "🤫 Kamgap va mulohazakorlik",
+            "🗣️ Ochiqko'ngil va sergaplik",
+            "⚡ Qat'iyatlilik va yetakchilik",
+            "🌈 Yumshoqlik va tinchliksevarlik"
+        ]
+    },
+    {
+        "q": "Kitob o'qishdan asosiy maqsadingiz nima?",
+        "options": [
+            "🧠 Dunyoqarashni kengaytirish va o'rganish",
+            "🚀 Hayotiy motivatsiya va kuch olish",
+            "🌌 Hayoliy dunyoga sayohat qilish",
+            "🧘 Charchoqni yozish va sokinlik topish"
+        ]
+    },
+    {
+        "q": "Kelajak haqida o'ylaganingizda qanday hislar uyg'onadi?",
+        "options": [
+            "🌅 Cheksiz umid va ishonch",
+            "🧐 Qiziqish va rejalashtirish istagi",
+            "😟 Biroz xavotir va mavhumlik",
+            "🧘 Taqdirga ishonch va xotirjamlik"
+        ]
+    },
+    {
+        "q": "Stressli vaziyatlarda o'zingizni qanday tutasiz?",
+        "options": [
+            "🤬 Tez asabiylashaman, hislarimni yashirolmayman",
+            "🤫 Ichimga yutib, jim bo'lib qolaman",
+            "🧊 Sovuqqonlik bilan vaziyatni boshqaraman",
+            "🍕 Chalg'ishga harakat qilaman (ovqat, kino va h.k.)"
+        ]
+    },
+    {
+        "q": "San'at va go'zallik siz uchun nima?",
+        "options": [
+            "🎭 Ruhning ozig'i va ilhom manbai",
+            "🧐 Estetik zavq va intellektual qiziqish",
+            "🧘 Shunchaki hayotni bezovchi vosita",
+            "🤷 Unchalik e'tibor bermayman"
+        ]
+    },
+    {
+        "q": "O'tmish haqida qanchalik tez-tez o'ylaysiz?",
+        "options": [
+            "⏳ Ko'p o'ylayman, sog'inch yoki pushaymonlik bor",
+            "📊 Faqat xato va tajriba sifatida tahlil qilaman",
+            "🌅 Kamdan kam o'ylayman, kelajak muhimroq",
+            "🧘 Hozirgi lahza bilan yashayman"
+        ]
+    },
+    {
+        "q": "Jamiyatdagi qoidalarga munosabatingiz qanday?",
+        "options": [
+            "🛡️ Tartib va barqarorlik uchun ularga qat'iy amal qilaman",
+            "🧐 Har bir qoidani shubha ostiga olib, tahlil qilaman",
+            "🦄 Men erkin ruhman, qoidalarga uncha bo'ysunmayman",
+            "⚖️ Vaziyatga qarab moslashaman"
+        ]
+    },
+    {
+        "q": "Agar hayotingiz haqida kitob yozilsa, janri nima bo'lar edi?",
+        "options": [
+            "🚀 Drama / Shaxsiy o'sish dramasi",
+            "🔮 Sarguzasht / Detektiv syujetlar",
+            "🧘 Falsafiy esse yoki memuar",
+            "🌈 Komediya / Quvnoq sarguzashtlar"
+        ]
+    },
+    {
+        "q": "Insonning tabiati haqida fikringiz qanday?",
+        "options": [
+            "😇 Hamma insonlar tubdan yaxshi deb ishonaman",
+            "😈 Inson tabiati xudbinlikka moyil deb o'ylayman",
+            "🎭 Inson tarbiyaga qarab o'zgaruvchan mavjudot",
+            "🌌 Inson sirli va murakkab dunyo"
+        ]
+    },
+    {
+        "q": "Muvaffaqiyat siz uchun birinchi navbatda nima?",
+        "options": [
+            "💰 Moliyaviy erkinlik va mavqega erishish",
+            "🧘 Ichki xotirjamlik va baxtni his qilish",
+            "🧠 Ilm-fan va kashfiyotlar qilish",
+            "🌍 Odamlarga foyda keltirish va meros qoldirish"
+        ]
+    },
+    {
+        "q": "Falsafiy mavzulardagi bahslarga munosabatingiz?",
+        "options": [
+            "🤩 Juda yaxshi ko'raman, soatlab tortishishim mumkin",
+            "🥱 Unchalik yoqmaydi, amaliyroq mavzular yaxshi",
+            "🧘 Faqat tinglashni va fikr qilishni yoqtiraman",
+            "🤷 Bahslardan qochaman"
+        ]
+    },
+    {
+        "q": "Kundalik hayot maromingiz qanday bo'lishini xohlaysiz?",
+        "options": [
+            "📅 Rejali, intizomli va tizimli",
+            "🌈 Erkin, kutilmagan hodisalarga to'la va ijodiy",
+            "🧘 Sokin, sokinlik va osoyishtalikda",
+            "🔥 Juda tez, faol va uchrashuvlarga boy"
+        ]
+    },
+    {
+        "q": "O'zingizni eng baxtli his qiladigan joyingiz qayer?",
+        "options": [
+            "🏠 Sokin uyim va yaqinlarim bag'ri",
+            "⛰️ Tabiat qo'ynida, sokin tog'larda yoki dengizda",
+            "🚀 Ishxonada yoki yangi loyiha ustida ishlayotganda",
+            "📚 Kutubxona yoki sokin kitob kafesida"
+        ]
+    }
 ]
 
 @router.message(database.is_menu_button("🧠 AI Tavsiya"))
@@ -1352,142 +1514,147 @@ async def start_ai_recommendation(message: Message, state: FSMContext):
         await message.answer("⚠️ Kechirasiz, AI funksiyalari hozirda vaqtincha o'chirilgan.")
         return
         
-    await state.set_state(UserAIRecommendationState.mood)
-    kb = keyboards.get_quiz_keyboard(MOOD_OPTIONS, "quiz_mood")
-    await message.answer(
-        "🧠 *AI Psixologik Tavsiya Tizimi*\n\n"
-        "Sizning hozirgi ruhiy holatingizga mos kitoblarni tanlab berishim uchun quyidagi savollarga javob bering.\n\n"
-        "1. *Hozirgi kayfiyatingiz qanday?*",
-        reply_markup=kb
-    )
-
-@router.callback_query(UserAIRecommendationState.mood, F.data.startswith("quiz_mood:"))
-async def process_quiz_mood(callback: CallbackQuery, state: FSMContext):
-    idx = int(callback.data.split(":")[1])
-    mood = MOOD_OPTIONS[idx]
-    await state.update_data(mood=mood)
+    await state.set_state(UserAIRecommendationState.quiz)
+    await state.update_data(current_question_index=0, answers=[])
     
-    await state.set_state(UserAIRecommendationState.interest)
-    kb = keyboards.get_quiz_keyboard(INTEREST_OPTIONS, "quiz_interest")
-    await callback.message.edit_text(
-        "🧠 *AI Psixologik Tavsiya Tizimi*\n\n"
-        f"Kayfiyat: {mood}\n\n"
-        "2. *Sizni hozirda qaysi mavzu ko'proq qiziqtiradi?*",
-        reply_markup=kb
-    )
-    await callback.answer()
-
-@router.callback_query(UserAIRecommendationState.interest, F.data.startswith("quiz_interest:"))
-async def process_quiz_interest(callback: CallbackQuery, state: FSMContext):
-    idx = int(callback.data.split(":")[1])
-    interest = INTEREST_OPTIONS[idx]
-    data = await state.get_data()
-    mood = data["mood"]
-    await state.update_data(interest=interest)
-    
-    await state.set_state(UserAIRecommendationState.expectation)
-    kb = keyboards.get_quiz_keyboard(EXPECTATION_OPTIONS, "quiz_expect")
-    await callback.message.edit_text(
-        "🧠 *AI Psixologik Tavsiya Tizimi*\n\n"
-        f"Kayfiyat: {mood}\n"
-        f"Qiziqish: {interest}\n\n"
-        "3. *Kitobdan nima kutmoqdasiz?*",
-        reply_markup=kb
-    )
-    await callback.answer()
-
-@router.callback_query(UserAIRecommendationState.expectation, F.data.startswith("quiz_expect:"))
-async def process_quiz_expectation(callback: CallbackQuery, state: FSMContext):
-    idx = int(callback.data.split(":")[1])
-    expect = EXPECTATION_OPTIONS[idx]
-    data = await state.get_data()
-    mood = data["mood"]
-    interest = data["interest"]
-    
-    await callback.message.edit_text("⌛ AI siz uchun eng mos kitoblarni tahlil qilmoqda. Iltimos, kuting...")
-    await callback.answer()
-    
-    # Fetch all active books to build system context
-    active_books = [b for b in database.books.values() if b.get("status", "approved") == "approved"]
-    if not active_books:
-        await callback.message.answer(
-            "Tizimda tavsiya qilish uchun kitoblar yetarli emas.",
-            reply_markup=keyboards.get_main_menu(database.is_admin(callback.from_user.id))
-        )
-        await state.clear()
-        return
-        
-    books_context_list = []
-    for b in active_books[:30]:  # Limit context size to fit token limits
-        books_context_list.append(f"ID: {b['id']} | Title: {b['title']} | Author: {b['author']} | Description: {b.get('description', '')[:100]}")
-    books_context = "\n".join(books_context_list)
-    
-    system_instruction = (
-        "Siz kitob tavsiya qiluvchi AI tizimsiz. Sizga berilgan kitoblar ro'yxatidan foydalanuvchining psixologik javoblariga mos keladigan eng yaxshi 3 ta kitobni tanlashingiz va tavsiya sababini ko'rsatishingiz lozim.\n"
-        "Faqat va faqat quyidagi formatda javob bering, har bir kitob uchun alohida qatorlarda:\n"
-        "[ID: <kitob_id>] - <kitob_nomi> - <muallif>\n"
-        "Tavsiya sababi: <sabab>\n\n"
-        "Eslatma: kitob ID raqamlari berilgan ro'yxatdagidek 100% aniq bo'lsin!"
-    )
-    
-    prompt = (
-        f"Mavjud kitoblar:\n{books_context}\n\n"
-        f"Foydalanuvchi javoblari:\n"
-        f"1. Kayfiyat: {mood}\n"
-        f"2. Qiziqish mavzusi: {interest}\n"
-        f"3. Kutish: {expect}\n\n"
-        "Eng mos keladigan 3 ta kitobni tavsiya qiling."
-    )
-    
-    ai_response = await ai_service.generate_response(prompt, system_instruction)
-    
-    # Parse the recommended book IDs from AI response
-    recommended_ids = []
-    lines = ai_response.split("\n")
-    for line in lines:
-        if "[ID:" in line:
-            try:
-                parts = line.split("]")[0].split("[ID:")
-                if len(parts) > 1:
-                    bid = parts[1].strip()
-                    if bid in database.books:
-                        recommended_ids.append(bid)
-            except Exception:
-                pass
-                
-    # Remove duplicate recommendations
-    recommended_ids = list(dict.fromkeys(recommended_ids))
-    
-    await state.clear()
-    
-    # Prepare text summary
-    response_clean = ai_response.replace("[ID:", "").replace("]", "")
-    
-    summary_text = (
-        "🧠 *AI Psixologik Tavsiyalari:*\n\n"
-        f"{response_clean}\n\n"
-        "Tavsiya etilgan kitoblarni quyidagi tugmalar orqali batafsil ko'rishingiz mumkin:"
-    )
+    q_data = PSYCHOLOGICAL_QUESTIONS[0]
     
     builder = keyboards.InlineKeyboardBuilder()
-    for bid in recommended_ids:
-        b_info = database.books[bid]
-        builder.row(keyboards.InlineKeyboardButton(text=f"📖 {b_info['title']}", callback_data=f"view_book:{bid}:ai_rec"))
-        
-    if recommended_ids:
-        ids_str = ",".join(recommended_ids)
-        if len(ids_str) < 50:  # Check callback payload limits
-            builder.row(keyboards.InlineKeyboardButton(text="📥 Hammasini Kutubxonamga Qo'shish", callback_data=f"ai_add_all:{ids_str}"))
-            
-    builder.row(keyboards.InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="back_to_cats"))
+    for idx, opt in enumerate(q_data["options"]):
+        builder.row(keyboards.InlineKeyboardButton(text=opt, callback_data=f"quiz_ans:0:{idx}"))
+    builder.row(keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm"))
     
-    # Delete the waiting message
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
+    await message.answer(
+        "🧠 *AI Psixologik Tavsiya Tizimi (Dunyoqarash & Psixologiya Tahlili)*\n\n"
+        "Sizning umumiy psixologiyangiz, xarakteringiz va dunyoqarashingizni chuqur tahlil qilib, eng mos kitoblarni tanlab berish uchun quyidagi 20 ta savolga javob bering.\n\n"
+        f"1/{len(PSYCHOLOGICAL_QUESTIONS)}. *{q_data['q']}*",
+        reply_markup=builder.as_markup()
+    )
+
+@router.callback_query(UserAIRecommendationState.quiz, F.data.startswith("quiz_ans:"))
+async def process_quiz_answer(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    q_idx = int(parts[1])
+    opt_idx = int(parts[2])
+    
+    data = await state.get_data()
+    current_index = data.get("current_question_index", 0)
+    answers = data.get("answers", [])
+    
+    # Anti-double-click / race condition check:
+    if q_idx != current_index:
+        await callback.answer()
+        return
         
-    await callback.message.answer(summary_text, reply_markup=builder.as_markup())
+    # Record answer
+    selected_option = PSYCHOLOGICAL_QUESTIONS[q_idx]["options"][opt_idx]
+    answers.append(selected_option)
+    next_index = current_index + 1
+    
+    await state.update_data(current_question_index=next_index, answers=answers)
+    
+    if next_index < len(PSYCHOLOGICAL_QUESTIONS):
+        # Present next question
+        q_data = PSYCHOLOGICAL_QUESTIONS[next_index]
+        
+        builder = keyboards.InlineKeyboardBuilder()
+        for idx, opt in enumerate(q_data["options"]):
+            builder.row(keyboards.InlineKeyboardButton(text=opt, callback_data=f"quiz_ans:{next_index}:{idx}"))
+        builder.row(keyboards.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm"))
+        
+        await callback.message.edit_text(
+            f"🧠 *AI Psixologik Tavsiya Tizimi* ({next_index + 1}/{len(PSYCHOLOGICAL_QUESTIONS)})\n\n"
+            f"*{q_data['q']}*",
+            reply_markup=builder.as_markup()
+        )
+        await callback.answer()
+    else:
+        # Quiz completed! Process recommendation...
+        await callback.answer("Rahmat! Javoblar tahlil qilinmoqda...")
+        await callback.message.edit_text("⌛ AI sizning dunyoqarashingiz va psixologiyangizni tahlil qilmoqda. Iltimos, kuting...")
+        
+        # Fetch all active books to build system context
+        active_books = [b for b in database.books.values() if b.get("status", "approved") == "approved"]
+        if not active_books:
+            await callback.message.answer(
+                "Tizimda tavsiya qilish uchun kitoblar yetarli emas.",
+                reply_markup=keyboards.get_main_menu(database.is_admin(callback.from_user.id))
+            )
+            await state.clear()
+            return
+            
+        books_context_list = []
+        for b in active_books[:30]:
+            books_context_list.append(f"ID: {b['id']} | Title: {b['title']} | Author: {b['author']} | Description: {b.get('description', '')[:100]}")
+        books_context = "\n".join(books_context_list)
+        
+        answers_text = ""
+        for idx, ans in enumerate(answers, 1):
+            answers_text += f"{idx}. {ans}\n"
+            
+        system_instruction = (
+            "Siz professional psixolog va kitob tavsiya qiluvchi ekspert AIsiz. Sizga berilgan kitoblar ro'yxatidan foydalanuvchining 20 ta savolga bergan javoblari (psixologiyasi va dunyoqarashi) asosida uning shaxsiyati, maqsadlari va qiziqishlariga 100% mos keladigan 3 ta kitobni tanlashingiz va tavsiya qilishingiz kerak.\n"
+            "Faqat va faqat quyidagi formatda javob bering, har bir kitob uchun alohida bloklarda:\n"
+            "[ID: <kitob_id>] - <kitob_nomi> - <muallif>\n"
+            "Tavsiya sababi: <sabab>\n\n"
+            "Eslatma:\n"
+            "1. Kitob ID raqamlari berilgan ro'yxatdagidek 100% to'g'ri bo'lishi shart.\n"
+            "2. Har bir kitob uchun tavsiya sababini psixologik jihatdan tushuntirib bering va u odamni o'qishga ilhomlantiring."
+        )
+        
+        prompt = (
+            f"Mavjud kitoblar:\n{books_context}\n\n"
+            f"Foydalanuvchining 20 ta savolga bergan javoblari:\n"
+            f"{answers_text}\n\n"
+            "Eng mos keladigan 3 ta kitobni tavsiya qiling."
+        )
+        
+        ai_response = await ai_service.generate_response(prompt, system_instruction)
+        
+        # Parse the recommended book IDs from AI response
+        recommended_ids = []
+        lines = ai_response.split("\n")
+        for line in lines:
+            if "[ID:" in line:
+                try:
+                    parts = line.split("]")[0].split("[ID:")
+                    if len(parts) > 1:
+                        bid = parts[1].strip()
+                        if bid in database.books:
+                            recommended_ids.append(bid)
+                except Exception:
+                    pass
+                    
+        recommended_ids = list(dict.fromkeys(recommended_ids))
+        
+        await state.clear()
+        
+        response_clean = ai_response.replace("[ID:", "").replace("]", "")
+        
+        summary_text = (
+            "🧠 *AI Psixologik Tavsiyalari (Dunyoqarash va Shaxsiyat Tahlili):*\n\n"
+            f"{response_clean}\n\n"
+            "Tavsiya etilgan kitoblarni quyidagi tugmalar orqali batafsil ko'rishingiz mumkin:"
+        )
+        
+        builder = keyboards.InlineKeyboardBuilder()
+        for bid in recommended_ids:
+            b_info = database.books[bid]
+            builder.row(keyboards.InlineKeyboardButton(text=f"📖 {b_info['title']}", callback_data=f"view_book:{bid}:ai_rec"))
+            
+        if recommended_ids:
+            ids_str = ",".join(recommended_ids)
+            if len(ids_str) < 50:
+                builder.row(keyboards.InlineKeyboardButton(text="📥 Hammasini Kutubxonamga Qo'shish", callback_data=f"ai_add_all:{ids_str}"))
+                
+        builder.row(keyboards.InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="back_to_cats"))
+        
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+            
+        await callback.message.answer(summary_text, reply_markup=builder.as_markup())
 
 @router.callback_query(F.data.startswith("ai_add_all:"))
 async def process_ai_add_all(callback: CallbackQuery):
@@ -1517,7 +1684,7 @@ async def process_ai_add_all(callback: CallbackQuery):
 
 
 # ----------------- AI BOOK COMPANION (RAG FREE CHAT) -----------------
-@router.message(database.is_menu_button("💬 AI Companion"))
+@router.message(database.is_menu_button("💬 AI bilan suhbat"))
 async def start_ai_companion(message: Message, state: FSMContext):
     if not database.settings.get("ai_enabled", True):
         await message.answer("⚠️ Kechirasiz, AI funksiyalari hozirda vaqtincha o'chirilgan.")
@@ -1529,9 +1696,9 @@ async def start_ai_companion(message: Message, state: FSMContext):
     kb.row(keyboards.KeyboardButton(text="❌ Chiqish"))
     
     await message.answer(
-        "💬 *AI Companion (Kitob Hamrohi) suhbat rejimiga xush kelibsiz!*\n\n"
-        "Men botdagi mavjud kitoblar haqida batafsil ma'lumotga egaman. "
-        "Mendan istalgan kitob, muallif yoki janr haqida so'rashingiz mumkin.\n\n"
+        "💬 *AI bilan suhbat rejimiga xush kelibsiz!*\n\n"
+        "Men bilan istalgan kitob, yozuvchi yoki adabiyot mavzusida suhbatlashishingiz mumkin. "
+        "Botdagi kitoblardan tashqari jahon adabiyotidagi har qanday asar haqida so'rang, men sizga ma'lumot beraman. 📚✨\n\n"
         "Suhbatdan chiqish uchun quyidagi *'❌ Chiqish'* tugmasini bosing.",
         reply_markup=kb.as_markup(resize_keyboard=True)
     )
@@ -1558,7 +1725,7 @@ async def process_ai_companion_chat(message: Message, state: FSMContext):
     active_books = [b for b in database.books.values() if b.get("status", "approved") == "approved"]
     
     books_context_list = []
-    for b in active_books[:40]:  # Limit context size to fit token limits
+    for b in active_books[:40]:
         cat_names = []
         for c_id in b.get("categories", []):
             cat_info = database.categories.get(c_id)
@@ -1574,17 +1741,61 @@ async def process_ai_companion_chat(message: Message, state: FSMContext):
         )
     books_context = "\n\n".join(books_context_list)
     
+    # Check if user mentioned any of our bot's books or authors (fuzzy match)
+    matching_books = []
+    text_lower = text.lower()
+    
+    def clean_str(s):
+        return s.replace("’", "'").replace("`", "'").replace("‘", "'").replace("\"", "").replace("'", "").strip()
+        
+    clean_text = clean_str(text_lower)
+    
+    for b in active_books:
+        title_clean = clean_str(b.get("title", "").lower())
+        author_clean = clean_str(b.get("author", "").lower())
+        
+        # Substring matching or word overlap
+        if title_clean and title_clean in clean_text:
+            matching_books.append(b)
+        elif author_clean and author_clean in clean_text:
+            matching_books.append(b)
+        else:
+            # Word check for main title words (length >= 4)
+            words = [w for w in title_clean.split() if len(w) >= 4]
+            if words and any(w in clean_text for w in words):
+                matching_books.append(b)
+                
+    match_note = ""
+    if matching_books:
+        # Deduplicate matches
+        unique_matches = []
+        seen_ids = set()
+        for mb in matching_books:
+            if mb["id"] not in seen_ids:
+                unique_matches.append(mb)
+                seen_ids.add(mb["id"])
+                
+        match_note = "\n\n[TIZIM MA'LUMOTI]: Foydalanuvchi quyidagi botda bor bo'lgan kitoblar haqida gapirdi. Ularga ushbu kitob(lar) bizning botimizda audio formatda borligini va suhbatdan chiqib '📚 Kitoblar' bo'limi orqali bemalol tinglashi mumkinligini juda samimiy shaklda eslatib o'ting:\n"
+        for mb in unique_matches:
+            match_note += f"- '{mb['title']}' (Muallif: {mb['author']})\n"
+            
     system_instruction = (
-        "Siz \"Uzbek Audio Book Bot\" tizimining kitob hamrohi (AI Companion) hisoblanasiz.\n"
-        "Foydalanuvchi bilan o'zbek tilida, do'stona va kitobxonlarga xos ohangda muloqot qiling.\n\n"
-        "Botdagi mavjud kitoblar ro'yxati:\n"
+        "Siz \"Uzbek Audio Book Bot\" tizimining intellektual va psixologik kitob hamrohi (AI bilan suhbat) hisoblanasiz.\n"
+        "Foydalanuvchi bilan o'zbek tilida, do'stona, samimiy va psixologik jihatdan yoqadigan, emojilardan boy foydalanilgan tarzda gaplashing. "
+        "Javoblaringiz oddiy va quruq bo'lmasin, suhbatdoshni o'ziga tortadigan, uning his-tuyg'ularini tushunadigan ohangda yozing.\n\n"
+        "Botdagi mavjud kitoblar ro'yxati (tinglash uchun bor):\n"
         f"{books_context}\n\n"
-        "Qoidalar:\n"
-        "1. Foydalanuvchiga faqat yuqoridagi kitoblar ro'yxatida bor bo'lgan kitoblarni tavsiya qiling va ular haqida gapiring.\n"
-        "2. Agar foydalanuvchi ro'yxatda yo'q kitobni so'rasa, u kitob botda yo'qligini, lekin u kitobni menyudagi '💡 Kitob Tavsiya Qilish' tugmasi orqali botga qo'shishni so'rashi mumkinligini muloyimlik bilan tushuntiring.\n"
-        "3. Har doim qisqa va qiziqarli javoblar bering."
+        "Muloqot qoidalari:\n"
+        "1. Foydalanuvchi istalgan kitob (botda bo'lmagan kitoblar ham), yozuvchi, falsafa yoki adabiyot haqida gaplashishi mumkin. "
+        "O'zingizning boy bilimingiz va internet ma'lumotlaridan kelib chiqib, u so'ragan har qanday asar haqida uning mazmuni, falsafiy g'oyalari va qahramonlari bo'yicha qiziqarli suhbatlashing. Hech qachon 'bu kitob bizda yo'q, boshqa kitob tanlang' deb rad etmang.\n"
+        "2. Agar suhbat davomida foydalanuvchi so'ragan yoki muhokama qilayotgan kitob botimizda mavjud bo'lsa (buni pastdagi [TIZIM MA'LUMOTI] ko'rsatadi), unga ushbu kitob botda audio formatda borligini, uni tinglash orqali ham asardan bahramand bo'lishi mumkinligini do'stona tarzda ayting.\n"
+        "3. Agar suhbat butunlay boshqa mavzuga (masalan, ovqatlanish, sport, ob-havo) o'tib ketsa, suhbatdoshning savollariga juda samimiy javob bering, lekin chiroyli tarzda 'Aytgancha, ushbu mavzu menga bir kitobni eslatdi...' deb yoki savol berib muloqotni yana kitoblar, adabiyot va mutolaa dunyosiga qaytaring.\n"
+        "4. Har safar muloqotni yakunlashdan avval suhbatdoshga uning shaxsiyatini ochishga yordam beradigan psixologik yoki adabiy savol qoldiring."
     )
     
+    if match_note:
+        system_instruction += match_note
+        
     ai_response = await ai_service.generate_response(text, system_instruction)
     
     await status_msg.delete()

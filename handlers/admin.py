@@ -1896,7 +1896,7 @@ async def menu_edit_row_select(callback: CallbackQuery, state: FSMContext):
     
     valid_keys = [
         "📚 Kitoblar", "📚 Kutubxonam", "🕒 Tarix", 
-        "🧠 AI Tavsiya", "💬 AI Companion", 
+        "🧠 AI Tavsiya", "💬 AI bilan suhbat", 
         "💡 Kitob Tavsiya Qilish", "🔍 Qidiruv", 
         "👤 Profil", "ℹ️ Yordam"
     ]
@@ -1922,7 +1922,7 @@ async def process_menu_row_value(message: Message, state: FSMContext):
     
     valid_keys = [
         "📚 Kitoblar", "📚 Kutubxonam", "🕒 Tarix", 
-        "🧠 AI Tavsiya", "💬 AI Companion", 
+        "🧠 AI Tavsiya", "💬 AI bilan suhbat", 
         "💡 Kitob Tavsiya Qilish", "🔍 Qidiruv", 
         "👤 Profil", "ℹ️ Yordam"
     ]
