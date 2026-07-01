@@ -391,3 +391,27 @@ def is_menu_button(button_key: str):
         label = labels.get(button_key, button_key)
         return text == label
     return filter_func
+
+async def save_user(user_id: int):
+    """
+    Saves/Updates only a single user's data in the MongoDB collection.
+    """
+    if db is None or users_col is None:
+        logger.warning("MongoDB database is not initialized. Cannot sync user.")
+        return
+        
+    try:
+        user_id_int = int(user_id)
+        user_data = users.get(user_id_int)
+        if user_data:
+            user_data_copy = user_data.copy()
+            user_data_copy["_id"] = user_id_int
+            user_data_copy["id"] = user_id_int
+            await users_col.update_one(
+                {"_id": user_id_int},
+                {"$set": user_data_copy},
+                upsert=True
+            )
+            logger.info(f"Successfully saved user {user_id_int} directly to MongoDB.")
+    except Exception as e:
+        logger.error(f"Error saving user {user_id} directly to MongoDB: {e}")

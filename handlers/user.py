@@ -335,6 +335,9 @@ async def process_profile_age(message: Message, state: FSMContext):
 
 @router.callback_query(UserProfileForm.region, F.data.startswith("profile_region:"))
 async def process_profile_region(callback: CallbackQuery, state: FSMContext):
+    # Answer callback instantly to prevent Webhook Retries
+    await callback.answer()
+    
     region = callback.data.split(":")[1]
     await state.update_data(region=region)
     
@@ -372,14 +375,14 @@ async def process_profile_region(callback: CallbackQuery, state: FSMContext):
             "region": data["region"],
             "interests": []
         }
-        await database.save_index(callback.bot)
+        
+        import asyncio
+        asyncio.create_task(database.save_user(user_id))
         
         await callback.message.answer(
             "🎉 Profilingiz muvaffaqiyatli to'ldirildi/yangilandi!",
             reply_markup=keyboards.get_main_menu(database.is_admin(user_id))
         )
-        
-    await callback.answer()
 
 @router.callback_query(UserProfileForm.interests, F.data.startswith("profile_interest_toggle:"))
 async def process_profile_interest_toggle(callback: CallbackQuery, state: FSMContext):
@@ -403,6 +406,9 @@ async def process_profile_interest_toggle(callback: CallbackQuery, state: FSMCon
 
 @router.callback_query(UserProfileForm.interests, F.data == "profile_interest_confirm")
 async def process_profile_interest_confirm(callback: CallbackQuery, state: FSMContext):
+    # Answer callback instantly to prevent Webhook Retries
+    await callback.answer()
+    
     data = await state.get_data()
     selected = data.get("selected_categories", [])
     await state.clear()
@@ -421,7 +427,9 @@ async def process_profile_interest_confirm(callback: CallbackQuery, state: FSMCo
         "region": data["region"],
         "interests": selected
     }
-    await database.save_index(callback.bot)
+    
+    import asyncio
+    asyncio.create_task(database.save_user(user_id))
     
     try:
         await callback.message.delete()
@@ -432,7 +440,6 @@ async def process_profile_interest_confirm(callback: CallbackQuery, state: FSMCo
         "🎉 Profilingiz muvaffaqiyatli to'ldirildi/yangilandi!",
         reply_markup=keyboards.get_main_menu(database.is_admin(user_id))
     )
-    await callback.answer()
 
 # ----------------- KITOBLLAR / CATEGORIES -----------------
 @router.message(database.is_menu_button("📚 Kitoblar"))
