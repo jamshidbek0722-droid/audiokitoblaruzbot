@@ -48,7 +48,8 @@ ADMIN_MENU_BUTTONS = [
     "🔐 Majburiy obuna",
     "📝 Footer matnini sozlash",
     "🤖 AI Sozlamalari",
-    "⚙️ Menyuni Sozlash"
+    "⚙️ Menyuni Sozlash",
+    "👤 Profil Sozlamalari"
 ]
 
 def is_admin_filter(message: Message) -> bool:
