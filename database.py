@@ -25,7 +25,9 @@ settings = {
         "total_input_tokens": 0,
         "total_output_tokens": 0,
         "total_cost": 0.0
-    }
+    },
+    "profile_mandatory": False,
+    "profile_interests_enabled": True
 }
 required_channels = {}     # channel_id -> {id: int, title: str, url: str}
 menu_settings = {}         # Row-based layout configurations
@@ -134,6 +136,10 @@ async def load_index(bot: Bot):
                     "total_output_tokens": 0,
                     "total_cost": 0.0
                 }
+            if "profile_mandatory" not in settings:
+                settings["profile_mandatory"] = False
+            if "profile_interests_enabled" not in settings:
+                settings["profile_interests_enabled"] = True
         else:
             # Initialize with default settings
             settings.update({
@@ -148,7 +154,9 @@ async def load_index(bot: Bot):
                     "total_input_tokens": 0,
                     "total_output_tokens": 0,
                     "total_cost": 0.0
-                }
+                },
+                "profile_mandatory": False,
+                "profile_interests_enabled": True
             })
             await settings_col.update_one(
                 {"_id": "global"},

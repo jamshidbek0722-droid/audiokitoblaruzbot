@@ -62,7 +62,7 @@ def get_admin_menu() -> ReplyKeyboardMarkup:
     builder.row(KeyboardButton(text="📢 Xabar yuborish"), KeyboardButton(text="👥 Adminlar"))
     builder.row(KeyboardButton(text="🔐 Majburiy obuna"), KeyboardButton(text="📝 Footer matnini sozlash"))
     builder.row(KeyboardButton(text="🤖 AI Sozlamalari"), KeyboardButton(text="⚙️ Menyuni Sozlash"))
-    builder.row(KeyboardButton(text="🏠 Asosiy menyu"))
+    builder.row(KeyboardButton(text="👤 Profil Sozlamalari"), KeyboardButton(text="🏠 Asosiy menyu"))
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
 
@@ -344,4 +344,15 @@ def get_quiz_keyboard(options: list, prefix: str) -> InlineKeyboardMarkup:
     for idx, opt in enumerate(options):
         builder.row(InlineKeyboardButton(text=opt, callback_data=f"{prefix}:{idx}"))
     builder.row(InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_fsm"))
+    return builder.as_markup()
+
+def get_profile_settings_keyboard(mandatory: bool, interests: bool) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    
+    mand_text = "🟢 Majburiy Profil: ON" if mandatory else "🔴 Majburiy Profil: OFF"
+    int_text = "🟢 Qiziqishlar: ON" if interests else "🔴 Qiziqishlar: OFF"
+    
+    builder.row(InlineKeyboardButton(text=mand_text, callback_data="admin_toggle_profile_mandatory"))
+    builder.row(InlineKeyboardButton(text=int_text, callback_data="admin_toggle_profile_interests"))
+    builder.row(InlineKeyboardButton(text="🔙 Orqaga", callback_data="cancel_fsm"))
     return builder.as_markup()

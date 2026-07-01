@@ -20,6 +20,38 @@ class SubscriptionMiddleware(BaseMiddleware):
         if database.is_admin(user_id):
             return await handler(event, data)
             
+        # Check mandatory profile completion if active
+        is_profile_mandatory = database.settings.get("profile_mandatory", False)
+        if is_profile_mandatory:
+            state_ctx = data.get("state")
+            current_state = await state_ctx.get_state() if state_ctx else None
+            
+            is_exempt = False
+            if isinstance(event, Message) and event.text:
+                if event.text.startswith("/start"):
+                    is_exempt = True
+            elif isinstance(event, CallbackQuery):
+                if event.data in ["check_sub", "complete_profile"] or event.data.startswith("profile_gender:") or event.data.startswith("profile_region:") or event.data.startswith("profile_interest_") or event.data == "cancel_fsm":
+                    is_exempt = True
+                    
+            if current_state and current_state.startswith("UserProfileForm:"):
+                is_exempt = True
+                
+            if not is_exempt:
+                user_data = database.users.get(user_id, {})
+                if not user_data.get("profile"):
+                    from keyboards import InlineKeyboardBuilder, InlineKeyboardButton
+                    builder = InlineKeyboardBuilder()
+                    builder.row(InlineKeyboardButton(text="👤 Profilni to'ldirish", callback_data="complete_profile"))
+                    
+                    text = "⚠️ Botdan foydalanish uchun avval profilingizni to'ldirishingiz majburiy:"
+                    if isinstance(event, Message):
+                        await event.answer(text, reply_markup=builder.as_markup())
+                    elif isinstance(event, CallbackQuery):
+                        await event.message.answer(text, reply_markup=builder.as_markup())
+                        await event.answer()
+                    return
+            
         is_sub_enabled = database.settings.get("mandatory_subscription", False)
         if is_sub_enabled and database.required_channels:
             # Allow /start and check_sub callback
@@ -89,6 +121,17 @@ async def start_cmd(message: Message):
         "Menyudan foydalaning:",
         reply_markup=get_main_menu(is_user_admin)
     )
+    
+    user_data = database.users.get(user_id, {})
+    is_profile_mandatory = database.settings.get("profile_mandatory", False)
+    if is_profile_mandatory and not user_data.get("profile") and not is_user_admin:
+        from keyboards import InlineKeyboardBuilder, InlineKeyboardButton
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="👤 Profilni to'ldirish", callback_data="complete_profile"))
+        await message.answer(
+            "⚠️ Botdan to'liq foydalanish uchun profilingizni to'ldirishingiz kerak. Iltimos, quyidagi tugmani bosing:",
+            reply_markup=builder.as_markup()
+        )
 
 @router.message(Command("help"))
 @router.message(database.is_menu_button("ℹ️ Yordam"))

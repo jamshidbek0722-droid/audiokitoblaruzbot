@@ -149,6 +149,17 @@ async def admin_check_message(message: Message, state: FSMContext):
         await message.answer("🔐 *Majburiy obunani boshqarish:*", reply_markup=keyboards.get_subscription_manage_keyboard(enabled))
         return
         
+    elif text == "👤 Profil Sozlamalari":
+        mandatory = database.settings.get("profile_mandatory", False)
+        interests = database.settings.get("profile_interests_enabled", True)
+        await message.answer(
+            "👤 *Foydalanuvchi Profili Sozlamalari:*\n\n"
+            f"• *Majburiy profil to'ldirish*: {'Yoqilgan (ON) 🟢' if mandatory else 'O\'chirilgan (OFF) 🔴'}\n"
+            f"• *Qiziqishlar (Janrlar) bo'limi*: {'Yoqilgan (ON) 🟢' if interests else 'O\'chirilgan (OFF) 🔴'}",
+            reply_markup=keyboards.get_profile_settings_keyboard(mandatory, interests)
+        )
+        return
+        
     elif text == "📝 Footer matnini sozlash":
         current_footer = database.settings.get("custom_footer", "o'rnatilmagan")
         await state.set_state(AdminState.edit_footer)
@@ -1954,3 +1965,34 @@ async def process_menu_row_value(message: Message, state: FSMContext):
         
     await database.save_index(message.bot)
     await message.answer(f"✅ {row_idx+1}-qator muvaffaqiyatli {action_msg}!", reply_markup=keyboards.get_admin_menu())
+
+# ----------------- ADMIN PROFILE SETTINGS TOGGLES -----------------
+@router.callback_query(F.data == "admin_toggle_profile_mandatory")
+async def toggle_profile_mandatory(callback: CallbackQuery):
+    mandatory = not database.settings.get("profile_mandatory", False)
+    database.settings["profile_mandatory"] = mandatory
+    await database.save_index(callback.bot)
+    
+    interests = database.settings.get("profile_interests_enabled", True)
+    await callback.message.edit_text(
+        "👤 *Foydalanuvchi Profili Sozlamalari:*\n\n"
+        f"• *Majburiy profil to'ldirish*: {'Yoqilgan (ON) 🟢' if mandatory else 'O\'chirilgan (OFF) 🔴'}\n"
+        f"• *Qiziqishlar (Janrlar) bo'limi*: {'Yoqilgan (ON) 🟢' if interests else 'O\'chirilgan (OFF) 🔴'}",
+        reply_markup=keyboards.get_profile_settings_keyboard(mandatory, interests)
+    )
+    await callback.answer("Majburiy profil sozlamasi o'zgartirildi.")
+
+@router.callback_query(F.data == "admin_toggle_profile_interests")
+async def toggle_profile_interests(callback: CallbackQuery):
+    interests = not database.settings.get("profile_interests_enabled", True)
+    database.settings["profile_interests_enabled"] = interests
+    await database.save_index(callback.bot)
+    
+    mandatory = database.settings.get("profile_mandatory", False)
+    await callback.message.edit_text(
+        "👤 *Foydalanuvchi Profili Sozlamalari:*\n\n"
+        f"• *Majburiy profil to'ldirish*: {'Yoqilgan (ON) 🟢' if mandatory else 'O\'chirilgan (OFF) 🔴'}\n"
+        f"• *Qiziqishlar (Janrlar) bo'limi*: {'Yoqilgan (ON) 🟢' if interests else 'O\'chirilgan (OFF) 🔴'}",
+        reply_markup=keyboards.get_profile_settings_keyboard(mandatory, interests)
+    )
+    await callback.answer("Qiziqishlar bo'limi sozlamasi o'zgartirildi.")

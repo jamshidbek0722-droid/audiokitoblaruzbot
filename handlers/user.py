@@ -337,7 +337,91 @@ async def process_profile_age(message: Message, state: FSMContext):
 async def process_profile_region(callback: CallbackQuery, state: FSMContext):
     region = callback.data.split(":")[1]
     await state.update_data(region=region)
-    await state.set_state(UserProfileForm.interests)
+    
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    interests_enabled = database.settings.get("profile_interests_enabled", True)
+    if interests_enabled:
+        await state.set_state(UserProfileForm.interests)
+        await state.update_data(selected_categories=[])
+        kb = keyboards.get_multi_category_selector(database.categories, [], "profile_interest")
+        await callback.message.answer(
+            "📚 *Qiziqadigan janrlaringizni tanlang:*\n\n"
+            "Bir yoki bir nechta janrni belgilashingiz mumkin (ixtiyoriy):",
+            reply_markup=kb
+        )
+    else:
+        # Save profile immediately without interests
+        data = await state.get_data()
+        await state.clear()
+        
+        user_id = callback.from_user.id
+        
+        user_data = database.users.setdefault(user_id, {
+            "id": user_id,
+            "favorites": [],
+            "history": [],
+            "joined_at": datetime.now().isoformat()
+        })
+        user_data["profile"] = {
+            "gender": data["gender"],
+            "age": data["age"],
+            "region": data["region"],
+            "interests": []
+        }
+        await database.save_index(callback.bot)
+        
+        await callback.message.answer(
+            "🎉 Profilingiz muvaffaqiyatli to'ldirildi/yangilandi!",
+            reply_markup=keyboards.get_main_menu(database.is_admin(user_id))
+        )
+        
+    await callback.answer()
+
+@router.callback_query(UserProfileForm.interests, F.data.startswith("profile_interest_toggle:"))
+async def process_profile_interest_toggle(callback: CallbackQuery, state: FSMContext):
+    cat_id = callback.data.split(":")[1]
+    data = await state.get_data()
+    selected = data.get("selected_categories", [])
+    
+    if cat_id in selected:
+        selected.remove(cat_id)
+    else:
+        selected.append(cat_id)
+        
+    await state.update_data(selected_categories=selected)
+    
+    kb = keyboards.get_multi_category_selector(database.categories, selected, "profile_interest")
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
+    await callback.answer()
+
+@router.callback_query(UserProfileForm.interests, F.data == "profile_interest_confirm")
+async def process_profile_interest_confirm(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    selected = data.get("selected_categories", [])
+    await state.clear()
+    
+    user_id = callback.from_user.id
+    
+    user_data = database.users.setdefault(user_id, {
+        "id": user_id,
+        "favorites": [],
+        "history": [],
+        "joined_at": datetime.now().isoformat()
+    })
+    user_data["profile"] = {
+        "gender": data["gender"],
+        "age": data["age"],
+        "region": data["region"],
+        "interests": selected
+    }
+    await database.save_index(callback.bot)
     
     try:
         await callback.message.delete()
@@ -345,37 +429,10 @@ async def process_profile_region(callback: CallbackQuery, state: FSMContext):
         pass
         
     await callback.message.answer(
-        "Qiziqadigan janrlaringiz yoki kitoblaringiz haqida yozing (ixtiyoriy, masalan: Badiiy, Tarixiy):\n"
-        "Yoki 'O'tkazib yuborish' tugmasini bosing.",
-        reply_markup=keyboards.get_skip_cancel_keyboard()
-    )
-    await callback.answer()
-
-@router.message(UserProfileForm.interests)
-async def process_profile_interests(message: Message, state: FSMContext):
-    text = message.text.strip()
-    interests = ""
-    if text != "⏭️ O'tkazib yuborish":
-        interests = text
-        
-    data = await state.get_data()
-    await state.clear()
-    
-    user_id = message.from_user.id
-    
-    if user_id in database.users:
-        database.users[user_id]["profile"] = {
-            "gender": data["gender"],
-            "age": data["age"],
-            "region": data["region"],
-            "interests": interests
-        }
-        await database.save_index(message.bot)
-        
-    await message.answer(
         "🎉 Profilingiz muvaffaqiyatli to'ldirildi/yangilandi!",
         reply_markup=keyboards.get_main_menu(database.is_admin(user_id))
     )
+    await callback.answer()
 
 # ----------------- KITOBLLAR / CATEGORIES -----------------
 @router.message(database.is_menu_button("📚 Kitoblar"))
