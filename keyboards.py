@@ -164,6 +164,8 @@ def get_book_details_keyboard(book_id: str, is_fav: bool, has_pdf: bool, src: st
     if has_pdf:
         builder.row(InlineKeyboardButton(text="📄 PDF Yuklash", callback_data=f"download_pdf:{book_id}"))
     
+    builder.row(InlineKeyboardButton(text="💡 AI xulosasi", callback_data=f"ai_review:{book_id}"))
+    
     fav_text = "📚 Kutubxonamdan o'chirish" if is_fav else "📚 Kutubxonamga qo'shish"
     builder.row(InlineKeyboardButton(text=fav_text, callback_data=f"toggle_fav:{book_id}:{src}"))
     

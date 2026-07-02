@@ -539,7 +539,20 @@ async def start_add_book(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AdminBookForm.title)
 async def process_book_title(message: Message, state: FSMContext):
-    await state.update_data(title=message.text.strip())
+    title = message.text.strip()
+    title_lower = title.lower()
+    
+    # Check if a book with this title already exists (case-insensitive)
+    exists = any(b.get("title", "").strip().lower() == title_lower for b in database.books.values())
+    if exists:
+        await message.answer(
+            f"❌ Xatolik: '{title}' nomli kitob botda avvaldan mavjud!\n"
+            "Iltimos, boshqa nomdagi kitobni kiriting:",
+            reply_markup=keyboards.get_cancel_keyboard()
+        )
+        return
+        
+    await state.update_data(title=title)
     await state.set_state(AdminBookForm.author)
     await message.answer("✍️ Kitob muallifini kiriting:", reply_markup=keyboards.get_cancel_keyboard())
 

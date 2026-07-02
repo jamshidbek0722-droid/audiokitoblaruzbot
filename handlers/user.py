@@ -1657,7 +1657,7 @@ async def process_quiz_answer(callback: CallbackQuery, state: FSMContext):
             answers_text += f"{idx}. {ans}\n"
             
         system_instruction = (
-            "Siz professional psixolog va kitob tavsiya qiluvchi ekspert AIsiz. Sizga berilgan kitoblar ro'yxatidan foydalanuvchining 20 ta savolga bergan javoblari (psixologiyasi va dunyoqarashi) asosida uning shaxsiyati, maqsadlari va qiziqishlariga 100% mos keladigan 3 ta kitobni tanlashingiz va tavsiya qilishingiz kerak.\n"
+            "Siz professional psixolog va kitob tavsiya qiluvchi ekspert AIsiz. Sizga berilgan kitoblar ro'yxatidan foydalanuvchining 20 ta savolga bergan javoblari (psixologiyasi va dunyoqarashi) asosida uning shaxsiyati, maqsadlari va qiziqishlariga 100% mos keladigan 5 tadan 7 tagacha eng mos keladigan kitoblarni (yoki mos keladigan barcha kitoblarni) tanlashingiz va tavsiya qilishingiz kerak.\n"
             "Faqat va faqat quyidagi formatda javob bering, har bir kitob uchun alohida bloklarda:\n"
             "[ID: <kitob_id>] - <kitob_nomi> - <muallif>\n"
             "Tavsiya sababi: <sabab>\n\n"
@@ -1670,7 +1670,7 @@ async def process_quiz_answer(callback: CallbackQuery, state: FSMContext):
             f"Mavjud kitoblar:\n{books_context}\n\n"
             f"Foydalanuvchining 20 ta savolga bergan javoblari:\n"
             f"{answers_text}\n\n"
-            "Eng mos keladigan 3 ta kitobni tavsiya qiling."
+            "Eng mos keladigan 5-7 ta kitobni (yoki mos keladigan barchasini) tavsiya qiling."
         )
         
         ai_response = await ai_service.generate_response(prompt, system_instruction)
@@ -1755,6 +1755,7 @@ async def start_ai_companion(message: Message, state: FSMContext):
         return
         
     await state.set_state(UserAIChatState.chat)
+    await state.update_data(chat_history=[])
     
     kb = keyboards.ReplyKeyboardBuilder()
     kb.row(keyboards.KeyboardButton(text="❌ Chiqish"))
@@ -1860,7 +1861,77 @@ async def process_ai_companion_chat(message: Message, state: FSMContext):
     if match_note:
         system_instruction += match_note
         
-    ai_response = await ai_service.generate_response(text, system_instruction)
+    # Retrieve past conversation history from FSM context
+    fsm_data = await state.get_data()
+    chat_history = fsm_data.get("chat_history", [])
+    
+    history_str = ""
+    for msg in chat_history:
+        role = "Foydalanuvchi" if msg["role"] == "user" else "Siz"
+        history_str += f"{role}: {msg['content']}\n"
+        
+    if history_str:
+        prompt_with_history = f"Suhbat tarixi:\n{history_str}\nFoydalanuvchining yangi xabari:\n{text}"
+    else:
+        prompt_with_history = text
+        
+    ai_response = await ai_service.generate_response(prompt_with_history, system_instruction)
+    
+    # Save current turn into the conversation history
+    chat_history.append({"role": "user", "content": text})
+    chat_history.append({"role": "assistant", "content": ai_response})
+    chat_history = chat_history[-10:]  # Keep last 5 turns to prevent context bloat
+    await state.update_data(chat_history=chat_history)
     
     await status_msg.delete()
     await message.answer(ai_response)
+
+# ----------------- AI BOOK SUMMARY REVIEW -----------------
+@router.callback_query(F.data.startswith("ai_review:"))
+async def process_book_ai_review(callback: CallbackQuery):
+    await callback.answer("AI xulosa tayyorlanmoqda, iltimos kuting...")
+    
+    parts = callback.data.split(":")
+    book_id = parts[1]
+    book = database.books.get(book_id)
+    if not book:
+        await callback.message.answer("Kitob topilmadi.")
+        return
+        
+    status_msg = await callback.message.answer("⌛ *AI ushbu kitob haqidagi ma'lumotlarni tahlil qilmoqda. Iltimos, kuting...*")
+    
+    title = book.get("title", "")
+    author = book.get("author", "")
+    desc = book.get("description", "")
+    
+    system_instruction = (
+        "Siz professional adabiyotshunos va kitob tahlilchisi AIsiz. Foydalanuvchiga berilgan kitob haqida internetdagi adabiy manbalar "
+        "va o'z bilimlaringizga tayanib, juda qiziqarli, tushunarli va chiroyli tahliliy xulosa (nima haqida ekanligi, asosiy g'oyasi, "
+        "qaysi jihatlari qiziq ekanligi) yozib bering. Emojilardan boy foydalaning, ohang samimiy va mutolaaga undovchi bo'lsin."
+    )
+    prompt = (
+        f"Kitob nomi: {title}\n"
+        f"Muallif: {author}\n"
+        f"Tavsif: {desc}\n\n"
+        f"Iltimos, ushbu '{title}' kitobi haqida batafsil va qiziqarli AI xulosasini tayyorlang."
+    )
+    
+    ai_response = await ai_service.generate_response(prompt, system_instruction)
+    
+    await status_msg.delete()
+    
+    builder = keyboards.InlineKeyboardBuilder()
+    builder.row(keyboards.InlineKeyboardButton(text="❌ Yopish", callback_data="close_ai_review"))
+    
+    await callback.message.answer(
+        f"💡 *'{title}' kitobi bo'yicha AI xulosasi:*\n\n{ai_response}",
+        reply_markup=builder.as_markup()
+    )
+
+@router.callback_query(F.data == "close_ai_review")
+async def close_ai_review(callback: CallbackQuery):
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.answer()
